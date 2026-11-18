@@ -244,10 +244,12 @@ enum MiniquadInputEvent {
         btn: MouseButton,
         x: f32,
         y: f32,
+        dpi_scale: f32,
     },
     MouseMotion {
         x: f32,
         y: f32,
+        dpi_scale: Option<f32>,
     },
     MouseWheel {
         x: f32,
@@ -257,11 +259,13 @@ enum MiniquadInputEvent {
         x: f32,
         y: f32,
         btn: MouseButton,
+        dpi_scale: f32,
     },
     MouseButtonUp {
         x: f32,
         y: f32,
         btn: MouseButton,
+        dpi_scale: f32,
     },
     Char {
         character: char,
@@ -283,6 +287,7 @@ enum MiniquadInputEvent {
         x: f32,
         y: f32,
         time: f64,
+        dpi_scale: f32,
     },
     WindowMinimized,
     WindowRestored,
@@ -293,11 +298,25 @@ impl MiniquadInputEvent {
         use crate::MiniquadInputEvent::*;
         match self {
             MouseLeave => t.mouse_leave_event(),
-            MouseEnter { btn, x, y } => t.mouse_enter_event(*btn, *x, *y),
-            MouseMotion { x, y } => t.mouse_motion_event(*x, *y),
+            MouseEnter { btn, x, y, dpi_scale } => {
+                t.input_event_dpi_scale(*dpi_scale);
+                t.mouse_enter_event(*btn, *x, *y);
+            }
+            MouseMotion { x, y, dpi_scale } => {
+                if let Some(scale) = dpi_scale {
+                    t.input_event_dpi_scale(*scale);
+                }
+                t.mouse_motion_event(*x, *y);
+            }
             MouseWheel { x, y } => t.mouse_wheel_event(*x, *y),
-            MouseButtonDown { x, y, btn } => t.mouse_button_down_event(*btn, *x, *y),
-            MouseButtonUp { x, y, btn } => t.mouse_button_up_event(*btn, *x, *y),
+            MouseButtonDown { x, y, btn, dpi_scale } => {
+                t.input_event_dpi_scale(*dpi_scale);
+                t.mouse_button_down_event(*btn, *x, *y);
+            }
+            MouseButtonUp { x, y, btn, dpi_scale } => {
+                t.input_event_dpi_scale(*dpi_scale);
+                t.mouse_button_up_event(*btn, *x, *y);
+            }
             Char {
                 character,
                 modifiers,
@@ -309,7 +328,10 @@ impl MiniquadInputEvent {
                 repeat,
             } => t.key_down_event(*keycode, *modifiers, *repeat),
             KeyUp { keycode, modifiers } => t.key_up_event(*keycode, *modifiers),
-            Touch { phase, id, x, y, time } => t.touch_event(*phase, *id, *x, *y, *time),
+            Touch { phase, id, x, y, time, dpi_scale } => {
+                t.input_event_dpi_scale(*dpi_scale);
+                t.touch_event(*phase, *id, *x, *y, *time);
+            }
             WindowMinimized => t.window_minimized_event(),
             WindowRestored => t.window_restored_event(),
         }
@@ -528,9 +550,22 @@ fn get_quad_context() -> &'static mut dyn miniquad::RenderingBackend {
 
 struct Stage {
     main_future: Pin<Box<dyn Future<Output = ()>>>,
+    next_input_event_dpi_scale: Option<f32>,
+}
+
+impl Stage {
+    fn take_input_event_dpi_scale(&mut self) -> f32 {
+        self.next_input_event_dpi_scale
+            .take()
+            .unwrap_or_else(miniquad::window::dpi_scale)
+    }
 }
 
 impl EventHandler for Stage {
+    fn input_event_dpi_scale(&mut self, scale: f32) {
+        self.next_input_event_dpi_scale = Some(scale);
+    }
+
     fn resize_event(&mut self, width: f32, height: f32) {
         let _z = telemetry::ZoneGuard::new("Event::resize_event");
         get_context().screen_width = width;
@@ -550,6 +585,8 @@ impl EventHandler for Stage {
             let event = MiniquadInputEvent::MouseMotion {
                 x: context.mouse_position.x,
                 y: context.mouse_position.y,
+                // A position synthesized from relative deltas has no source DPI.
+                dpi_scale: None,
             };
             context
                 .input_events
@@ -559,6 +596,7 @@ impl EventHandler for Stage {
     }
 
     fn mouse_motion_event(&mut self, x: f32, y: f32) {
+        let dpi_scale = Some(self.take_input_event_dpi_scale());
         let context = get_context();
 
         if !context.cursor_grabbed {
@@ -567,7 +605,7 @@ impl EventHandler for Stage {
             context
                 .input_events
                 .iter_mut()
-                .for_each(|arr| arr.push(MiniquadInputEvent::MouseMotion { x, y }));
+                .for_each(|arr| arr.push(MiniquadInputEvent::MouseMotion { x, y, dpi_scale }));
         }
 
         if context.update_on.mouse_motion {
@@ -592,15 +630,15 @@ impl EventHandler for Stage {
     }
 
     fn mouse_button_down_event(&mut self, btn: MouseButton, x: f32, y: f32) {
+        let dpi_scale = self.take_input_event_dpi_scale();
         let context = get_context();
 
         context.mouse_down.insert(btn);
         context.mouse_pressed.insert(btn);
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonDown { x, y, btn }));
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::MouseButtonDown { x, y, btn, dpi_scale })
+        });
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
@@ -612,15 +650,15 @@ impl EventHandler for Stage {
     }
 
     fn mouse_button_up_event(&mut self, btn: MouseButton, x: f32, y: f32) {
+        let dpi_scale = self.take_input_event_dpi_scale();
         let context = get_context();
         //     println!("btn = {}", btn as u32);
         context.mouse_down.remove(&btn);
         context.mouse_released.insert(btn);
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn, dpi_scale })
+        });
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
@@ -643,16 +681,16 @@ impl EventHandler for Stage {
     }
 
     fn mouse_enter_event(&mut self, btn: MouseButton, x: f32, y: f32) {
+        let dpi_scale = self.take_input_event_dpi_scale();
         let context = get_context();
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
         }
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseEnter { x, y, btn }));
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::MouseEnter { x, y, btn, dpi_scale })
+        });
         if btn != MouseButton::Unknown {
             context.mouse_down.insert(btn);
             context.mouse_pressed.insert(btn);
@@ -664,6 +702,7 @@ impl EventHandler for Stage {
     }
 
     fn touch_event(&mut self, phase: TouchPhase, id: u64, x: f32, y: f32, time: f64) {
+        let dpi_scale = self.take_input_event_dpi_scale();
         let context = get_context();
 
         context.touches.insert(
@@ -677,25 +716,29 @@ impl EventHandler for Stage {
         );
 
         if context.simulate_mouse_with_touch {
-            if phase == TouchPhase::Started {
-                self.mouse_button_down_event(MouseButton::Left, x, y);
-            }
-
-            if phase == TouchPhase::Ended {
-                self.mouse_button_up_event(MouseButton::Left, x, y);
-            }
-
-            if phase == TouchPhase::Moved {
-                self.mouse_motion_event(x, y);
+            match phase {
+                TouchPhase::Started => {
+                    self.input_event_dpi_scale(dpi_scale);
+                    self.mouse_button_down_event(MouseButton::Left, x, y);
+                }
+                TouchPhase::Ended => {
+                    self.input_event_dpi_scale(dpi_scale);
+                    self.mouse_button_up_event(MouseButton::Left, x, y);
+                }
+                TouchPhase::Moved => {
+                    self.input_event_dpi_scale(dpi_scale);
+                    self.mouse_motion_event(x, y);
+                }
+                TouchPhase::Cancelled => {}
             }
         } else if context.update_on.touch {
             miniquad::window::schedule_update();
         };
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::Touch { phase, id, x, y, time }));
+        let context = get_context();
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::Touch { phase, id, x, y, time, dpi_scale })
+        });
 
         if context.update_on.mouse_down {
             miniquad::window::schedule_update();
@@ -1022,6 +1065,7 @@ impl Window {
             unsafe { CONTEXT = Some(context) };
 
             Box::new(Stage {
+                next_input_event_dpi_scale: None,
                 main_future: Box::pin(async {
                     future.await;
                     unsafe {

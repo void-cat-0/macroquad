@@ -289,6 +289,10 @@ pub mod utils {
     }
 
     /// Repeats all events that came since last call of this function with current value of `subscriber`. This function must be called at each frame.
+    ///
+    /// Absolute pointer callbacks keep their original coordinates. Each is preceded by
+    /// [`miniquad::EventHandler::input_event_dpi_scale`] with the recorded DPI scale.
+    /// Grabbed motion synthesized from relative deltas has no source scale.
     pub fn repeat_all_miniquad_input<T: miniquad::EventHandler>(t: &mut T, subscriber: usize) {
         let context = get_context();
 
