@@ -16,6 +16,7 @@ fn get_profiler() -> &'static mut Profiler {
             capture_request: false,
             capture: false,
             drawcalls: vec![],
+            drawcall_textures: vec![],
             strings: vec![],
         })
     }
@@ -135,6 +136,7 @@ pub(crate) fn reset() {
 
     if profiler.capture_request {
         profiler.drawcalls.clear();
+        profiler.drawcall_textures.clear();
         profiler.capture = true;
         crate::get_context().gl.capture(true);
         profiler.capture_request = false;
@@ -202,11 +204,13 @@ struct Profiler {
     capture: bool,
     enable_request: Option<bool>,
     drawcalls: Vec<DrawCallTelemetry>,
+    drawcall_textures: Vec<crate::texture::Texture2D>,
     strings: Vec<String>,
 }
 
 impl Profiler {
     fn begin_gpu_query(&mut self, name: &str) {
+        if crate::get_quad_context().info().backend != miniquad::Backend::OpenGl { return; }
         assert!(
             self.active_query.is_none(),
             "Only one active query is allowed by OpenGL"
@@ -230,6 +234,7 @@ impl Profiler {
     }
 
     fn end_gpu_query(&mut self) {
+        if crate::get_quad_context().info().backend != miniquad::Backend::OpenGl { return; }
         let name = self
             .active_query
             .take()
@@ -325,6 +330,8 @@ pub fn log_string(string: &str) {
     get_profiler().strings.push(string.to_owned());
 }
 
+/// Captured draw calls. Their texture handles stay valid until the next
+/// captured frame replaces them.
 pub fn drawcalls() -> Vec<DrawCallTelemetry> {
     get_profiler().drawcalls.clone()
 }
@@ -363,14 +370,19 @@ pub(crate) fn track_drawcall(
         ..Default::default()
     });
 
-    let pass = Some(get_quad_context().new_render_pass(texture, None));
-    get_quad_context().begin_pass(pass, miniquad::PassAction::clear_color(0.4, 0.8, 0.4, 1.));
+    let pass = get_quad_context().new_render_pass(texture, None);
+    get_quad_context().begin_pass(Some(pass), miniquad::PassAction::clear_color(0.4, 0.8, 0.4, 1.));
     get_quad_context().apply_pipeline(pipeline);
+    get_quad_context().apply_viewport(0, 0, 128, 128);
+    get_quad_context().apply_scissor_rect(0, 0, 128, 128);
     get_quad_context().apply_bindings(bindings);
     get_quad_context().draw(0, indices_count as _, 1);
     get_quad_context().end_render_pass();
+    get_quad_context().delete_render_pass(pass);
 
-    get_profiler().drawcalls.push(DrawCallTelemetry {
+    let profiler = get_profiler();
+    profiler.drawcall_textures.push(crate::texture::Texture2D::from_miniquad_texture_owned(texture));
+    profiler.drawcalls.push(DrawCallTelemetry {
         indices_count,
         texture,
     });

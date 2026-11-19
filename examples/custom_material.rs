@@ -161,11 +161,11 @@ async fn main() {
     let ctx = unsafe { get_internal_gl().quad_context };
     let mat = load_material(
         match ctx.info().backend {
-            Backend::OpenGl => ShaderSource::Glsl {
+            Backend::Metal => ShaderSource::Msl { program: METAL },
+            _ => ShaderSource::Glsl {
                 vertex: VERTEX,
                 fragment: FRAGMENT,
             },
-            Backend::Metal => ShaderSource::Msl { program: METAL },
         },
         MaterialParams {
             uniforms: vec![UniformDesc::new("test_color", UniformType::Float4)],
@@ -177,12 +177,12 @@ async fn main() {
 
     let mat_with_array = load_material(
         match ctx.info().backend {
-            Backend::OpenGl => ShaderSource::Glsl {
-                vertex: VERTEX,
-                fragment: FRAGMENT_WITH_ARRAY,
-            },
             Backend::Metal => ShaderSource::Msl {
                 program: METAL_WITH_ARRAY,
+            },
+            _ => ShaderSource::Glsl {
+                vertex: VERTEX,
+                fragment: FRAGMENT_WITH_ARRAY,
             },
         },
         MaterialParams {

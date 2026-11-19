@@ -145,12 +145,12 @@ impl MagicSnapshotter {
         let shader = ctx
             .new_shader(
                 match ctx.info().backend {
-                    Backend::OpenGl => ShaderSource::Glsl {
-                        vertex: snapshotter_shader::VERTEX,
-                        fragment: snapshotter_shader::FRAGMENT,
-                    },
                     Backend::Metal => ShaderSource::Msl {
                         program: snapshotter_shader::METAL,
+                    },
+                    _ => ShaderSource::Glsl {
+                        vertex: snapshotter_shader::VERTEX,
+                        fragment: snapshotter_shader::FRAGMENT,
                     },
                 },
                 snapshotter_shader::meta(),
@@ -190,7 +190,7 @@ impl MagicSnapshotter {
         let bindings = Bindings {
             vertex_buffers: vec![vertex_buffer],
             index_buffer,
-            images: vec![ctx.new_texture_from_rgba8(1, 1, &[0, 0, 0, 0])],
+            images: vec![],
         };
 
         MagicSnapshotter {
@@ -202,26 +202,28 @@ impl MagicSnapshotter {
     }
 
     fn snapshot(&mut self, ctx: &mut dyn RenderingBackend, camera_render_pass: Option<RenderPass>) {
-        if let Some(camera_render_pass) = camera_render_pass {
-            let texture = ctx.render_pass_texture(camera_render_pass);
+        let source = camera_render_pass.map(|pass| ctx.render_pass_resolve_texture(pass).unwrap_or_else(|| ctx.render_pass_texture(pass)));
+        let (width, height, format) = source.map(|texture| {
+            let p = ctx.texture_params(texture);
+            (p.width, p.height, p.format)
+        }).unwrap_or_else(|| {
+            let (w,h) = miniquad::window::screen_size();
+            (w as u32,h as u32,miniquad::TextureFormat::RGBA8)
+        });
+        if self.screen_texture.map(|texture| {
+            let p = ctx.texture_params(texture);
+            (p.width,p.height,p.format) != (width,height,format)
+        }).unwrap_or(true) {
+            if let Some(pass) = self.pass.take() { ctx.delete_render_pass(pass); }
+            if let Some(texture) = self.screen_texture.take() { ctx.delete_texture(texture); }
+            self.screen_texture = Some(ctx.new_render_texture(TextureParams {
+                width,height,format,..Default::default()
+            }));
+        }
+        if let Some(texture) = source {
             if self.pass.is_none() {
-                let miniquad::TextureParams {
-                    width,
-                    height,
-                    format,
-                    ..
-                } = ctx.texture_params(texture);
-                let color_img = ctx.new_render_texture(TextureParams {
-                    width,
-                    height,
-                    format,
-                    ..Default::default()
-                });
-
-                self.pass = Some(ctx.new_render_pass(color_img, None));
-                self.screen_texture = Some(color_img);
+                self.pass = Some(ctx.new_render_pass(self.screen_texture.unwrap(), None));
             }
-
             if self.bindings.images.len() == 0 {
                 self.bindings.images.push(texture);
             } else {
@@ -236,23 +238,6 @@ impl MagicSnapshotter {
             ctx.draw(0, 6, 1);
             ctx.end_render_pass();
         } else {
-            let (screen_width, screen_height) = miniquad::window::screen_size();
-            if self.screen_texture.is_none()
-                || self
-                    .screen_texture
-                    .map(|t| {
-                        let (w, h) = ctx.texture_size(t);
-                        w != screen_width as _ || h != screen_height as _
-                    })
-                    .unwrap_or(false)
-            {
-                self.screen_texture = Some(ctx.new_render_texture(TextureParams {
-                    width: screen_width as _,
-                    height: screen_height as _,
-                    ..Default::default()
-                }));
-            }
-
             let texture = self.screen_texture.unwrap();
             Texture2D::unmanaged(texture).grab_screen();
         }
@@ -393,12 +378,12 @@ impl PipelinesStorage {
         let shader = ctx
             .new_shader(
                 match ctx.info().backend {
-                    Backend::OpenGl => ShaderSource::Glsl {
-                        vertex: shader::VERTEX,
-                        fragment: shader::FRAGMENT,
-                    },
                     Backend::Metal => ShaderSource::Msl {
                         program: shader::METAL,
+                    },
+                    _ => ShaderSource::Glsl {
+                        vertex: shader::VERTEX,
+                        fragment: shader::FRAGMENT,
                     },
                 },
                 shader::meta(),
@@ -823,6 +808,8 @@ impl QuadGl {
             ctx.draw(0, dc.indices_count as i32, 1);
 
             if dc.capture {
+                ctx.end_render_pass();
+                current_pass = None;
                 telemetry::track_drawcall(&pipeline.pipeline, bindings, dc.indices_count);
             }
 

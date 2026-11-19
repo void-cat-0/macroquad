@@ -1289,12 +1289,12 @@ pub(crate) mod ui_context {
             let material = self.material.get_or_insert_with(|| {
                 load_material(
                     match ctx.info().backend {
-                        Backend::OpenGl => ShaderSource::Glsl {
-                            vertex: VERTEX_SHADER,
-                            fragment: FRAGMENT_SHADER,
-                        },
                         Backend::Metal => ShaderSource::Msl {
                             program: METAL_SHADER,
+                        },
+                        _ => ShaderSource::Glsl {
+                            vertex: VERTEX_SHADER,
+                            fragment: FRAGMENT_SHADER,
                         },
                     },
                     MaterialParams {

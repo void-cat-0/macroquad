@@ -138,3 +138,16 @@ where
 
     crate::get_context().unwind = true;
 }
+
+static mut PAUSE_RESUME_LISTENER: Option<fn(bool)> = None;
+
+/// Install a listener called on the rendering thread when the window pauses
+/// or resumes, including Android's native activity lifecycle events.
+pub fn set_pause_resume_listener(listener: fn(bool)) {
+    crate::thread_assert::same_thread();
+    unsafe { PAUSE_RESUME_LISTENER = Some(listener); }
+}
+
+pub(crate) fn notify_pause_resume(paused: bool) {
+    if let Some(listener) = unsafe { PAUSE_RESUME_LISTENER } { listener(paused); }
+}

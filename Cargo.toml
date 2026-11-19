@@ -27,10 +27,11 @@ opt-level = 3
 all-features = true
 
 [dependencies]
-miniquad = { git = "https://github.com/void-cat-0/miniquad", features = ["log-impl"] }
+miniquad = { git = "https://github.com/Winamin/miniquad", features = ["log-impl"] }
+#miniquad = { path = "../miniquad", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
-image = { version = "0.24", default-features = false, features = ["png", "tga"] }
+image = { version = "0.24", default-features = false, features = ["png", "tga", "jpeg"] }
 macroquad_macro = { version = "0.1.8", path = "macroquad_macro" }
 fontdue = "0.9"
 backtrace = { version = "0.3.60", optional = true }
