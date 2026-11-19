@@ -923,6 +923,7 @@ impl EventHandler for Stage {
     }
 
     fn window_restored_event(&mut self) {
+        window::notify_pause_resume(false);
         let context = get_context();
 
         #[cfg(target_os = "android")]
@@ -939,6 +940,7 @@ impl EventHandler for Stage {
     }
 
     fn window_minimized_event(&mut self) {
+        window::notify_pause_resume(true);
         let context = get_context();
 
         #[cfg(target_os = "android")]

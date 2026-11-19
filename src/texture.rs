@@ -355,6 +355,7 @@ pub async fn load_texture(path: &str) -> Result<Texture2D, Error> {
 pub struct RenderPass {
     pub color_texture: Texture2D,
     pub depth_texture: Option<Texture2D>,
+    pub resolve_texture: Option<Texture2D>,
     pub render_pass: Arc<miniquad::RenderPass>,
 }
 
@@ -419,60 +420,43 @@ pub fn render_target_msaa(width: u32, height: u32) -> RenderTarget {
 }
 
 pub fn render_target_ex(width: u32, height: u32, params: RenderTargetParams) -> RenderTarget {
-    let context = get_context();
+    let texture = Texture2D::from_miniquad_texture_owned(
+        get_quad_context().new_render_texture(miniquad::TextureParams {
+            width, height, ..Default::default()
+        }),
+    );
+    render_target_with_texture(texture, params)
+}
 
-    let color_texture = get_quad_context().new_render_texture(miniquad::TextureParams {
-        width,
-        height,
-        sample_count: params.sample_count,
-        ..Default::default()
-    });
-    let depth_texture = if params.depth {
-        Some(
-            get_quad_context().new_render_texture(miniquad::TextureParams {
-                width,
-                height,
-                format: miniquad::TextureFormat::Depth,
-                sample_count: params.sample_count,
-                ..Default::default()
-            }),
-        )
-    } else {
-        None
-    };
-    let render_pass;
-    let texture;
-    if params.sample_count > 1 {
-        let color_resolve_texture =
-            get_quad_context().new_render_texture(miniquad::TextureParams {
-                width,
-                height,
-                ..Default::default()
-            });
-        render_pass = get_quad_context().new_render_pass_mrt(
-            &[color_texture],
-            Some(&[color_resolve_texture]),
-            depth_texture,
-        );
-        texture = color_resolve_texture;
-    } else {
-        render_pass = get_quad_context().new_render_pass_mrt(&[color_texture], None, depth_texture);
-        texture = color_texture;
-    }
-
-    let texture = Texture2D {
-        texture: context.textures.store_texture(texture),
-    };
-
-    let render_pass = RenderPass {
-        color_texture: texture.clone(),
-        depth_texture: None,
-        render_pass: Arc::new(render_pass),
-    };
-    RenderTarget {
-        texture,
-        render_pass,
-    }
+/// Create a pass resolving into an existing owned texture. All attachments
+/// remain alive until the last render target clone is dropped.
+pub fn render_target_with_texture(texture: Texture2D, params: RenderTargetParams) -> RenderTarget {
+    let id = texture.raw_miniquad_id();
+    let (width, height) = get_quad_context().texture_size(id);
+    let color_texture = if params.sample_count > 1 {
+        Texture2D::from_miniquad_texture_owned(get_quad_context().new_render_texture(
+            miniquad::TextureParams { width, height, sample_count: params.sample_count,
+                format: get_quad_context().texture_params(id).format, ..Default::default() }
+        ))
+    } else { texture.clone() };
+    let depth_texture = params.depth.then(|| Texture2D::from_miniquad_texture_owned(
+        get_quad_context().new_render_texture(miniquad::TextureParams {
+            width, height, format: miniquad::TextureFormat::Depth,
+            sample_count: params.sample_count, ..Default::default()
+        })
+    ));
+    let resolve = [id];
+    let pass = get_quad_context().new_render_pass_mrt(
+        &[color_texture.raw_miniquad_id()],
+        (params.sample_count > 1).then_some(resolve.as_slice()),
+        depth_texture.as_ref().map(Texture2D::raw_miniquad_id),
+    );
+    let resolve_texture = (params.sample_count > 1).then(|| texture.clone());
+    RenderTarget { texture, render_pass: RenderPass {
+        color_texture, depth_texture,
+        resolve_texture,
+        render_pass: Arc::new(pass)
+    }}
 }
 
 #[derive(Debug, Clone)]
@@ -729,6 +713,12 @@ impl Texture2D {
         }
     }
 
+    /// Transfer ownership of a miniquad texture to macroquad's resource manager.
+    /// Do not delete the handle separately after calling this function.
+    pub fn from_miniquad_texture_owned(texture: miniquad::TextureId) -> Texture2D {
+        Texture2D { texture: get_context().textures.store_texture(texture) }
+    }
+
     /// Creates a Texture2D from a slice of bytes in an R,G,B,A sequence,
     /// with the given width and height.
     ///
@@ -857,6 +847,11 @@ impl Texture2D {
         use miniquad::*;
         let texture = self.raw_miniquad_id();
         let ctx = get_quad_context();
+        #[cfg(all(feature = "vulkan", any(windows, all(target_os = "linux", not(target_env = "ohos")))))]
+        if ctx.info().backend == miniquad::Backend::Vulkan {
+            ctx.texture_grab_screen(texture);
+            return;
+        }
         let params = ctx.texture_params(texture);
         let raw_id = match unsafe { ctx.texture_raw_id(texture) } {
             miniquad::RawId::OpenGl(id) => id,
@@ -874,6 +869,8 @@ impl Texture2D {
             TextureFormat::Alpha => miniquad::gl::GL_R8,
         };
         unsafe {
+            let mut previous_texture = 0;
+            gl::glGetIntegerv(gl::GL_TEXTURE_BINDING_2D, &mut previous_texture);
             gl::glBindTexture(gl::GL_TEXTURE_2D, raw_id);
             gl::glCopyTexImage2D(
                 gl::GL_TEXTURE_2D,
@@ -885,22 +882,46 @@ impl Texture2D {
                 params.height as _,
                 0,
             );
+            gl::glBindTexture(gl::GL_TEXTURE_2D, previous_texture as _);
         }
     }
 
     /// Returns an [Image] from the pixel data in this texture.
     ///
     /// This operation can be expensive.
+    /// RGB8 and Alpha textures are converted to RGBA8. Other texture formats
+    /// cannot be represented by an Image and are rejected before reading.
     pub fn get_texture_data(&self) -> Image {
         let ctx = get_quad_context();
-        let (width, height) = ctx.texture_size(self.raw_miniquad_id());
-        let mut image = Image {
+        let texture = self.raw_miniquad_id();
+        let params = ctx.texture_params(texture);
+        let (width, height) = (params.width, params.height);
+        assert!(width <= u16::MAX as u32 && height <= u16::MAX as u32,
+            "Texture dimensions exceed Image dimensions");
+        let channels = match params.format {
+            miniquad::TextureFormat::RGBA8 => 4,
+            miniquad::TextureFormat::RGB8 => 3,
+            miniquad::TextureFormat::Alpha => 1,
+            _ => panic!("Image requires an 8-bit color texture"),
+        };
+        let mut bytes = vec![0; width as usize * height as usize * channels];
+        ctx.texture_read_pixels(texture, &mut bytes);
+        if channels != 4 {
+            let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+            for pixel in bytes.chunks_exact(channels) {
+                if channels == 3 {
+                    rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+                } else {
+                    rgba.extend_from_slice(&[0, 0, 0, pixel[0]]);
+                }
+            }
+            bytes = rgba;
+        }
+        Image {
             width: width as _,
             height: height as _,
-            bytes: vec![0; width as usize * height as usize * 4],
-        };
-        ctx.texture_read_pixels(self.raw_miniquad_id(), &mut image.bytes);
-        image
+            bytes,
+        }
     }
 }
 

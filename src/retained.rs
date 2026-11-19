@@ -86,6 +86,8 @@ thread_local! {
 
 fn backend_supports_retained(ctx: &dyn miniquad::RenderingBackend) -> bool {
     let info = ctx.info();
+    #[cfg(all(feature = "vulkan", any(windows, all(target_os = "linux", not(target_env = "ohos")))))]
+    if matches!(info.backend, Backend::Vulkan) { return true; }
     // Native GLES2 has no guaranteed u32 index support. Do not guess extensions.
     matches!(info.backend, Backend::OpenGl)
         && (!info.gl_version_string.starts_with("OpenGL ES") || info.glsl_support.v300es)
