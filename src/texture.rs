@@ -816,6 +816,12 @@ impl Texture2D {
         );
     }
 
+    /// Upload several tightly packed regions, batched when the backend supports it.
+    pub fn update_regions(&self, regions: &[miniquad::TextureUpdateRegion<'_>]) {
+        let texture = self.raw_miniquad_id();
+        get_quad_context().texture_update_regions(texture, regions);
+    }
+
     /// Returns the width of this texture.
     pub fn width(&self) -> f32 {
         let ctx = get_quad_context();
