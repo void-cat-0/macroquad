@@ -428,13 +428,17 @@ fn begin_pass(ctx: &mut dyn miniquad::RenderingBackend, pass: Option<RenderPass>
 /// Called by macroquad before it submits its own batched geometry, so retained
 /// and immediate draws keep their original order.
 pub(crate) fn end_pass_if_active(ctx: &mut dyn miniquad::RenderingBackend) {
-    if ACTIVE_PASS.with(|slot| slot.borrow_mut().take()).is_some() {
-        ctx.end_render_pass();
-    }
+    close_pass(ctx);
     let removed = REMOVED_MATERIALS.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
     for (pipeline, shader) in removed {
         ctx.delete_pipeline(pipeline);
         ctx.delete_shader(shader);
+    }
+}
+
+pub(crate) fn close_pass(ctx: &mut dyn miniquad::RenderingBackend) {
+    if ACTIVE_PASS.with(|slot| slot.borrow_mut().take()).is_some() {
+        ctx.end_render_pass();
     }
 }
 

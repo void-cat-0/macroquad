@@ -817,9 +817,24 @@ impl Texture2D {
     }
 
     /// Upload several tightly packed regions, batched when the backend supports it.
+    /// To have already queued immediate geometry sample the old pixels, flush
+    /// those draws before calling this method.
     pub fn update_regions(&self, regions: &[miniquad::TextureUpdateRegion<'_>]) {
+        if regions.is_empty() {
+            return;
+        }
         let texture = self.raw_miniquad_id();
-        get_quad_context().texture_update_regions(texture, regions);
+        let ctx = get_quad_context();
+        #[cfg(all(
+            feature = "vulkan",
+            any(windows, all(target_os = "linux", not(target_env = "ohos")))
+        ))]
+        if ctx.info().backend == miniquad::Backend::Vulkan {
+            // Transfers must be outside dynamic rendering. Update retained's
+            // pass state too, so a later retained draw reopens the target.
+            crate::retained::close_pass(ctx);
+        }
+        ctx.texture_update_regions(texture, regions);
     }
 
     /// Returns the width of this texture.
