@@ -827,7 +827,11 @@ impl Texture2D {
         let ctx = get_quad_context();
         #[cfg(all(
             feature = "vulkan",
-            any(windows, all(target_os = "linux", not(target_env = "ohos")))
+            any(
+                windows,
+                target_os = "android",
+                all(target_os = "linux", not(target_env = "ohos"))
+            )
         ))]
         if ctx.info().backend == miniquad::Backend::Vulkan {
             // Transfers must be outside dynamic rendering. Update retained's
@@ -896,7 +900,14 @@ impl Texture2D {
         use miniquad::*;
         let texture = self.raw_miniquad_id();
         let ctx = get_quad_context();
-        #[cfg(all(feature = "vulkan", any(windows, all(target_os = "linux", not(target_env = "ohos")))))]
+        #[cfg(all(
+            feature = "vulkan",
+            any(
+                windows,
+                target_os = "android",
+                all(target_os = "linux", not(target_env = "ohos"))
+            )
+        ))]
         if ctx.info().backend == miniquad::Backend::Vulkan {
             ctx.texture_grab_screen(texture);
             return;

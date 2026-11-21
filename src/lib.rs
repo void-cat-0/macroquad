@@ -562,6 +562,11 @@ impl Stage {
 }
 
 impl EventHandler for Stage {
+    #[cfg(all(target_os = "android", feature = "vulkan"))]
+    fn android_vulkan_context(&mut self) -> Option<&mut miniquad::graphics::vulkan::VulkanContext> {
+        get_quad_context().vulkan_context()
+    }
+
     fn input_event_dpi_scale(&mut self, scale: f32) {
         self.next_input_event_dpi_scale = Some(scale);
     }
@@ -910,7 +915,9 @@ impl EventHandler for Stage {
             // unless we use SyncObjects or we have to wait for other async operations to finish.
             // See https://wikis.khronos.org/opengl/Common_Mistakes#glFinish_and_glFlush.
             #[cfg(any(target_arch = "wasm32", target_os = "linux"))]
-            if telemetry::is_enabled() {
+            if telemetry::is_enabled()
+                && get_quad_context().info().backend == miniquad::Backend::OpenGl
+            {
                 let _z = telemetry::ZoneGuard::new("glFinish/glFLush");
                 unsafe {
                     miniquad::gl::glFlush();
