@@ -153,6 +153,7 @@ impl Image {
     }
 
     /// Creates an Image from a slice of bytes that contains an encoded image.
+    /// Returns an error if either dimension exceeds `u16::MAX`.
     ///
     /// If `format` is None, it will make an educated guess on the
     /// [ImageFormat][image::ImageFormat].
@@ -171,18 +172,23 @@ impl Image {
         format: Option<image::ImageFormat>,
     ) -> Result<Image, Error> {
         let img = if let Some(fmt) = format {
-            image::load_from_memory_with_format(bytes, fmt)?.to_rgba8()
+            image::load_from_memory_with_format(bytes, fmt)?
         } else {
-            image::load_from_memory(bytes)?.to_rgba8()
+            image::load_from_memory(bytes)?
         };
-        let width = img.width() as u16;
-        let height = img.height() as u16;
-        let bytes = img.into_raw();
+        let (width, height) = (img.width(), img.height());
+        if width > u16::MAX as u32 || height > u16::MAX as u32 {
+            use image::error::{LimitError, LimitErrorKind};
+            return Err(image::ImageError::Limits(LimitError::from_kind(
+                LimitErrorKind::DimensionError,
+            ))
+            .into());
+        }
 
         Ok(Image {
-            width,
-            height,
-            bytes,
+            width: width as u16,
+            height: height as u16,
+            bytes: img.into_rgba8().into_raw(),
         })
     }
 
@@ -750,18 +756,13 @@ impl Texture2D {
     pub fn from_file_with_format(bytes: &[u8], format: Option<image::ImageFormat>) -> Texture2D {
         let img = if let Some(fmt) = format {
             image::load_from_memory_with_format(bytes, fmt)
-                .unwrap_or_else(|e| panic!("{}", e))
-                .to_rgba8()
         } else {
             image::load_from_memory(bytes)
-                .unwrap_or_else(|e| panic!("{}", e))
-                .to_rgba8()
-        };
-        let width = img.width() as u16;
-        let height = img.height() as u16;
-        let bytes = img.into_raw();
+        }
+        .unwrap_or_else(|e| panic!("{e}"))
+        .into_rgba8();
 
-        Self::from_rgba8(width, height, &bytes)
+        Self::from_rgba8_u32(img.width(), img.height(), img.as_raw())
     }
 
     /// Creates a Texture2D from an [Image].
@@ -769,16 +770,21 @@ impl Texture2D {
         Texture2D::from_rgba8(image.width, image.height, &image.bytes)
     }
 
-    /// Creates a Texture2D from a miniquad
-    /// [Texture](https://docs.rs/miniquad/0.3.0-alpha/miniquad/graphics/struct.Texture.html)
+    /// Wraps an existing Miniquad texture without taking ownership.
+    ///
+    /// Keep the texture alive while it is in use. A handle made with
+    /// [`miniquad::TextureId::from_raw_id`] is for binding only; operations
+    /// that need size or format metadata, such as [`draw_texture`] and
+    /// [`Self::get_texture_data`], require a texture managed by Miniquad.
     pub const fn from_miniquad_texture(texture: miniquad::TextureId) -> Texture2D {
         Texture2D {
             texture: TextureHandle::Unmanaged(texture),
         }
     }
 
-    /// Transfer ownership of a miniquad texture to macroquad's resource manager.
-    /// Do not delete the handle separately after calling this function.
+    /// Transfer ownership of a Miniquad texture to Macroquad's resource manager.
+    /// Do not delete the handle separately. This does not add size or format
+    /// metadata to a raw handle; see [`Self::from_miniquad_texture`].
     pub fn from_miniquad_texture_owned(texture: miniquad::TextureId) -> Texture2D {
         Texture2D { texture: get_context().textures.store_texture(texture) }
     }
@@ -798,7 +804,18 @@ impl Texture2D {
     /// # }
     /// ```
     pub fn from_rgba8(width: u16, height: u16, bytes: &[u8]) -> Texture2D {
-        let texture = get_quad_context().new_texture_from_rgba8(width, height, bytes);
+        Self::from_rgba8_u32(width as u32, height as u32, bytes)
+    }
+
+    fn from_rgba8_u32(width: u32, height: u32, bytes: &[u8]) -> Texture2D {
+        let texture = get_quad_context().new_texture_from_data_and_format(
+            bytes,
+            miniquad::TextureParams {
+                width,
+                height,
+                ..Default::default()
+            },
+        );
         let ctx = get_context();
         let texture = ctx.textures.store_texture(texture);
         let texture = Texture2D { texture };
@@ -994,17 +1011,13 @@ impl Texture2D {
         let texture = self.raw_miniquad_id();
         let params = ctx.texture_params(texture);
         let (width, height) = (params.width, params.height);
-        assert!(
-            width <= u16::MAX as u32 && height <= u16::MAX as u32,
-            "Texture dimensions exceed Image dimensions"
-        );
         let channels = match params.format {
             miniquad::TextureFormat::RGBA8 => 4,
             miniquad::TextureFormat::RGB8 => 3,
             miniquad::TextureFormat::Alpha => 1,
             _ => panic!("Image requires an 8-bit color texture"),
         };
-        // Two u16 dimensions fit as a pixel count, but the RGBA allocation
+        // The backend caps dimensions at u16::MAX, but the RGBA allocation
         // might not fit the address space on 32-bit targets.
         let pixels = width as usize * height as usize;
         let rgba_bytes = Layout::array::<[u8; 4]>(pixels)

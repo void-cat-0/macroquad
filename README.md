@@ -101,10 +101,10 @@ cargo build --target wasm32-unknown-unknown
 
 This will produce .wasm file in `target/wasm32-unknown-unknown/debug/CRATENAME.wasm` or in `target/wasm32-unknown-unknown/release/CRATENAME.wasm` if built with `--release`.
 
-And then use the following .html to load it. For builds from this fork, use
-this checkout's `js/mq_js_bundle.js` instead of the upstream CDN script below.
-Apps that don't use bundled plugins can use `js/gl.js` from their matching
-Miniquad checkout. WebGL 2 texture transfers rely on the matching GL host.
+Copy `js/mq_js_bundle.js` from this checkout next to the `.wasm` file before
+opening this HTML. Build and deploy the two files together; texture allocation
+uses the matching WebGL host to report failures. Apps that don't use bundled
+plugins can use `js/gl.js` from their matching Miniquad checkout.
 
 <details><summary>index.html</summary>
 
@@ -132,8 +132,7 @@ Miniquad checkout. WebGL 2 texture transfers rely on the matching GL host.
 
 <body>
     <canvas id="glcanvas" tabindex='1'></canvas>
-    <!-- Minified and statically hosted version of https://github.com/not-fl3/macroquad/blob/master/js/mq_js_bundle.js -->
-    <script src="https://not-fl3.github.io/miniquad-samples/mq_js_bundle.js"></script>
+    <script src="mq_js_bundle.js"></script>
     <script>load("CRATENAME.wasm");</script> <!-- Your compiled wasm file -->
 </body>
 

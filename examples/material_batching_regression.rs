@@ -1,4 +1,4 @@
-//! Pixel regression for material state and texture ownership in batched draws.
+//! Pixel regressions for material batching, texture ownership and readback.
 //! Run with `cargo run --example material_batching_regression` on OpenGL,
 //! or add `--features vulkan` for Vulkan on desktop Linux and Windows.
 
@@ -103,6 +103,24 @@ fn check_screen_capture(material: &Material) {
     gl_use_default_material();
 }
 
+fn check_direct_texture_resize() {
+    let texture = Texture2D::from_rgba8(1, 1, &BLACK_PIXEL);
+    let id = texture.raw_miniquad_id();
+    let pixels = [RED_PIXEL, GREEN_PIXEL].concat();
+    {
+        let ctx = unsafe { get_internal_gl() }.quad_context;
+        assert!(ctx.try_texture_resize(id, 2, 1, Some(&pixels)));
+        assert!(
+            !ctx.try_texture_resize(id, u16::MAX as u32 + 1, 1, None),
+            "resize exceeds Image width limit"
+        );
+    }
+
+    let image = texture.get_texture_data();
+    assert_eq!((image.width, image.height), (2, 1));
+    assert_eq!(image.bytes, pixels);
+}
+
 const USE_VULKAN: bool = cfg!(all(
     feature = "vulkan",
     any(windows, all(target_os = "linux", not(target_env = "ohos")))
@@ -130,6 +148,7 @@ async fn main() {
         assert_ne!(backend, miniquad::Backend::OpenGl, "Vulkan requested");
     } else {
         assert_eq!(backend, miniquad::Backend::OpenGl, "OpenGL requested");
+        check_direct_texture_resize();
     }
 
     let target = render_target(WIDTH as u32, HEIGHT as u32);

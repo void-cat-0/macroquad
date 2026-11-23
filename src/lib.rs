@@ -347,8 +347,10 @@ impl Context {
         draw_call_vertex_capacity: usize,
         draw_call_index_capacity: usize,
     ) -> Context {
-        let mut ctx: Box<dyn miniquad::RenderingBackend> =
-            miniquad::window::new_rendering_backend();
+        // Keep textures representable as an Image even after direct Miniquad resizes.
+        let mut ctx = miniquad::window::new_rendering_backend_with_texture_size_limit(
+            std::num::NonZeroU16::MAX.into(),
+        );
         let (screen_width, screen_height) = miniquad::window::screen_size();
 
         Context {
