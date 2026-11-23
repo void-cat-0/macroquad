@@ -2,7 +2,8 @@
 name = "macroquad-particles"
 version = "0.2.2"
 authors = ["Fedor Logachev <not.fl3@gmail.com>"]
-edition = "2018"
+edition = "2024"
+rust-version = "1.90"
 license = "MIT/Apache-2.0"
 description = """
 Visual effects editor based on macroquad and megaui.

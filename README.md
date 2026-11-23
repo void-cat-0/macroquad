@@ -24,6 +24,8 @@
 
 ## Build Instructions
 
+The Vulkan development branch uses Rust 2024 and requires Rust 1.90 or newer.
+
 ### Setting Up a Macroquad Project
 
 Macroquad is a normal rust dependency, therefore an empty macroquad project may be created with:

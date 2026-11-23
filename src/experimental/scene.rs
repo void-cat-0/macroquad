@@ -377,7 +377,7 @@ impl Scene {
         }
     }
 
-    pub fn get_any(&mut self, handle: HandleUntyped) -> Option<RefMutAny> {
+    pub fn get_any(&mut self, handle: HandleUntyped) -> Option<RefMutAny<'_>> {
         let handle = handle.0;
         let cell = self.nodes.get_mut(handle.id)?;
 
@@ -596,7 +596,7 @@ impl Iterator for MagicVecIterator {
 static mut SCENE: Option<Scene> = None;
 
 unsafe fn get_scene() -> &'static mut Scene {
-    SCENE.get_or_insert_with(|| Scene::new())
+    unsafe { (*(&raw mut SCENE)).get_or_insert_with(Scene::new) }
 }
 
 pub(crate) fn allocated_memory() -> usize {

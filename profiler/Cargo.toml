@@ -2,7 +2,8 @@
 name = "macroquad-profiler"
 version = "0.2.0"
 authors = ["Fedor Logachev <not.fl3@gmail.com>"]
-edition = "2018"
+edition = "2024"
+rust-version = "1.90"
 description = "Profiler UI for macroquad"
 license = "MIT/Apache-2.0"
 

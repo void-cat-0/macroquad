@@ -193,16 +193,18 @@ impl<'a> Drag<'a> {
                 .multiline(false)
                 .ui(ui, &mut s.string);
 
-            if let Ok(n) = s.string.parse() {
-                *data = n;
-                s.string_represents = n.into();
-                s.before = s.string.clone();
-            } else if s.string.is_empty() {
-                *data = T::default();
-                s.string_represents = 0.0;
-                s.before = s.string.clone();
-            } else {
-                s.string = s.before.clone();
+            match s.string.parse() {
+                Ok(n) => {
+                    *data = n;
+                    s.string_represents = n.into();
+                    s.before = s.string.clone();
+                }
+                Err(_) if s.string.is_empty() => {
+                    *data = T::default();
+                    s.string_represents = 0.0;
+                    s.before = s.string.clone();
+                }
+                Err(_) => s.string = s.before.clone(),
             }
         }
 

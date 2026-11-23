@@ -1,7 +1,7 @@
 #[macro_export]
 #[doc(hidden)]
 macro_rules! hash {
-    ($s:expr) => {{
+    ($s:expr_2021) => {{
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -15,7 +15,7 @@ macro_rules! hash {
         let id = concat!(file!(), line!(), column!());
         hash!(id)
     }};
-    ($($s:expr),*) => {{
+    ($($s:expr_2021),*) => {{
         let mut s: u128 = 0;
         $(s += $crate::hash!($s) as u128;)*
         $crate::hash!(s)

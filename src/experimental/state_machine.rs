@@ -97,9 +97,7 @@ impl<T: scene::Node + 'static> StateMachine<T> {
             StateMachine::Ready(state_machine) => {
                 state_machine.set_state(state);
             }
-            StateMachine::InUse {
-                ref mut next_state, ..
-            } => {
+            StateMachine::InUse { next_state, .. } => {
                 *next_state = Some(state);
             }
         }
@@ -108,9 +106,7 @@ impl<T: scene::Node + 'static> StateMachine<T> {
     pub const fn state(&self) -> usize {
         match self {
             StateMachine::Ready(state_machine) => state_machine.state(),
-            StateMachine::InUse {
-                ref current_state, ..
-            } => *current_state,
+            StateMachine::InUse { current_state, .. } => *current_state,
         }
     }
 

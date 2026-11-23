@@ -6,7 +6,7 @@ static mut PROFILER: Option<Profiler> = None;
 
 fn get_profiler() -> &'static mut Profiler {
     unsafe {
-        PROFILER.get_or_insert_with(|| Profiler {
+        (*(&raw mut PROFILER)).get_or_insert_with(|| Profiler {
             frame: Frame::new(),
             queries: HashMap::new(),
             active_query: None,
@@ -116,7 +116,7 @@ pub(crate) fn reset() {
     let profiler = get_profiler();
 
     assert!(
-        get_profiler().frame.active_zone.is_null(),
+        profiler.frame.active_zone.is_null(),
         "New frame started with unpaired begin/end zones."
     );
 

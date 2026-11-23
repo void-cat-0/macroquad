@@ -166,7 +166,7 @@ pub struct EditboxState {
 
 impl EditboxState {
     pub fn clamp_selection<'a>(&mut self, text: &'a Vec<char>) {
-        if let Some((ref mut start, ref mut end)) = &mut self.selection {
+        if let Some((start, end)) = &mut self.selection {
             if *start >= text.len() as u32 {
                 *start = text.len() as _;
             }
@@ -334,7 +334,7 @@ impl EditboxState {
         if shift {
             match &mut self.selection {
                 None => self.selection = Some((start_cursor, end_cursor)),
-                Some((_, ref mut end)) => {
+                Some((_, end)) => {
                     *end = end_cursor;
                 }
             }

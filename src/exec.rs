@@ -35,11 +35,10 @@ impl Future for FileLoadingFuture {
     type Output = Result<Vec<u8>, Error>;
 
     fn poll(self: Pin<&mut Self>, _context: &mut Context) -> Poll<Self::Output> {
-        let mut contents = self.contents.lock().unwrap();
-        if let Some(contents) = contents.take() {
-            Poll::Ready(contents)
-        } else {
-            Poll::Pending
+        let contents = self.contents.lock().unwrap().take();
+        match contents {
+            Some(contents) => Poll::Ready(contents),
+            None => Poll::Pending,
         }
     }
 }
@@ -48,19 +47,12 @@ fn waker() -> Waker {
     unsafe fn clone(data: *const ()) -> RawWaker {
         RawWaker::new(data, &VTABLE)
     }
-    unsafe fn wake(_data: *const ()) { // Hide this warning
-        // panic!(
-        //     "macroquad does not support waking futures, please use coroutines, \
-        //     otherwise your pending future will block until the next frame"
-        // )
-    }
-    unsafe fn wake_by_ref(data: *const ()) {
-        wake(data);
-    }
+    // Macroquad polls futures each frame and does not use wake notifications.
+    fn wake(_data: *const ()) {}
     unsafe fn drop(_data: *const ()) {
         // Nothing to do
     }
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake, drop);
     let raw_waker = RawWaker::new(std::ptr::null(), &VTABLE);
     unsafe { Waker::from_raw(raw_waker) }
 }

@@ -157,22 +157,25 @@ use crate::{
 use glam::{vec2, Mat4, Vec2};
 
 pub(crate) mod thread_assert {
-    static mut THREAD_ID: Option<std::thread::ThreadId> = None;
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    // A later Window (for example a separate test) may register another thread.
+    // A new generation invalidates the old registration without a lock on each draw.
+    static CONTEXT_GENERATION: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static THREAD_GENERATION: Cell<Option<usize>> = const { Cell::new(None) };
+    }
 
     pub fn set_thread_id() {
-        unsafe {
-            THREAD_ID = Some(std::thread::current().id());
-        }
+        let generation = CONTEXT_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+        THREAD_GENERATION.set(Some(generation));
     }
 
     pub fn same_thread() {
-        unsafe {
-            thread_local! {
-                static CURRENT_THREAD_ID: std::thread::ThreadId = std::thread::current().id();
-            }
-            assert!(THREAD_ID.is_some());
-            assert!(THREAD_ID.unwrap() == CURRENT_THREAD_ID.with(|id| *id));
-        }
+        assert!(THREAD_GENERATION.get() == Some(CONTEXT_GENERATION.load(Ordering::Relaxed)));
     }
 }
 struct Context {
@@ -518,7 +521,8 @@ impl Context {
     }
 }
 
-#[no_mangle]
+// The context is initialized and used on the registered rendering thread.
+#[unsafe(no_mangle)]
 static mut CONTEXT: Option<Context> = None;
 
 // This is required for #[macroquad::test]
@@ -527,6 +531,8 @@ static mut CONTEXT: Option<Context> = None;
 // so this module should be publicly available
 #[doc(hidden)]
 pub mod test {
+    pub static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Older versions of macroquad_macro still reference these hidden symbols.
     pub static mut MUTEX: Option<std::sync::Mutex<()>> = None;
     pub static ONCE: std::sync::Once = std::sync::Once::new();
 }
@@ -534,17 +540,13 @@ pub mod test {
 fn get_context() -> &'static mut Context {
     thread_assert::same_thread();
 
-    unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
+    unsafe { (*(&raw mut CONTEXT)).as_mut().unwrap() }
 }
 
 fn get_quad_context() -> &'static mut dyn miniquad::RenderingBackend {
     thread_assert::same_thread();
 
-    unsafe {
-        assert!(CONTEXT.is_some());
-    }
-
-    unsafe { &mut *CONTEXT.as_mut().unwrap().quad_context }
+    unsafe { &mut *(*(&raw mut CONTEXT)).as_mut().unwrap().quad_context }
 }
 
 struct Stage {
@@ -1077,7 +1079,7 @@ impl Window {
                 main_future: Box::pin(async {
                     future.await;
                     unsafe {
-                        if let Some(ctx) = CONTEXT.as_mut() {
+                        if let Some(ctx) = (*(&raw mut CONTEXT)).as_mut() {
                             ctx.gl.reset();
                         }
                     }
