@@ -446,6 +446,23 @@ pub(crate) fn end_pass_if_active(ctx: &mut dyn miniquad::RenderingBackend) {
     }
 }
 
+fn backend_pass_is_open(_ctx: &mut dyn miniquad::RenderingBackend, _pass: Option<RenderPass>) -> bool {
+    #[cfg(all(
+        feature = "vulkan",
+        any(
+            windows,
+            target_os = "android",
+            all(target_os = "linux", not(target_env = "ohos"))
+        )
+    ))]
+    if let Some(vk) = _ctx.vulkan_context() {
+        // Synchronous resource operations can end Vulkan rendering without
+        // passing through Macroquad's retained draw code.
+        return vk.render_pass_is_open(_pass);
+    }
+    true
+}
+
 pub(crate) fn close_pass(ctx: &mut dyn miniquad::RenderingBackend) {
     let Some(ActivePass { pass: _pass }) = ACTIVE_PASS.with(|slot| slot.borrow_mut().take()) else {
         return;
@@ -518,7 +535,7 @@ fn draw_meshes_ranges_inner(
 
     let ctx = gl.quad_context;
     let active = ACTIVE_PASS.with(|slot| slot.borrow().map(|state| state.pass));
-    let reuse = active == Some(pass);
+    let reuse = active == Some(pass) && backend_pass_is_open(ctx, pass);
     let (width, height) = if reuse {
         pass_size(ctx, pass)
     } else {

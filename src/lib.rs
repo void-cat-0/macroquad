@@ -563,6 +563,14 @@ impl Stage {
 }
 
 impl EventHandler for Stage {
+    #[cfg(all(
+        feature = "vulkan",
+        any(windows, all(target_os = "linux", not(target_env = "ohos")))
+    ))]
+    fn desktop_vulkan_context(&mut self) -> Option<&mut miniquad::graphics::vulkan::VulkanContext> {
+        get_quad_context().vulkan_context()
+    }
+
     #[cfg(all(target_os = "android", feature = "vulkan"))]
     fn android_vulkan_context(&mut self) -> Option<&mut miniquad::graphics::vulkan::VulkanContext> {
         get_quad_context().vulkan_context()

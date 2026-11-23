@@ -902,6 +902,11 @@ impl QuadGl {
         self.state.viewport
     }
 
+    /// The model matrix a call to geometry would capture now.
+    pub fn get_model_matrix(&self) -> glam::Mat4 {
+        self.state.model()
+    }
+
     pub fn push_model_matrix(&mut self, matrix: glam::Mat4) {
         self.state.model_stack.push(self.state.model() * matrix);
     }

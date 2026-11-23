@@ -415,8 +415,9 @@ pub struct RenderPass {
 
 #[derive(Debug, Clone)]
 pub struct RenderTargetParams {
-    /// 1 means no multi sampling.
-    /// Note that sample_count > 1 is not supported on GL2, GLES2 and WebGL1
+    /// Requested sample count; `1` means no multisampling. The backend can
+    /// select a different count. Some OpenGL implementations choose the actual
+    /// sample count during allocation.
     pub sample_count: i32,
 
     /// depth: true creates a depth render target attachment and allows
@@ -461,7 +462,7 @@ pub fn render_target(width: u32, height: u32) -> RenderTarget {
     render_target_ex(width, height, RenderTargetParams::default())
 }
 
-/// A shortcut to create a render target with no depth buffer and `sample_count: 4`
+/// Create a render target without a depth buffer, requesting four samples per pixel.
 pub fn render_target_msaa(width: u32, height: u32) -> RenderTarget {
     render_target_ex(
         width,
@@ -474,43 +475,89 @@ pub fn render_target_msaa(width: u32, height: u32) -> RenderTarget {
 }
 
 pub fn render_target_ex(width: u32, height: u32, params: RenderTargetParams) -> RenderTarget {
-    let texture = Texture2D::from_miniquad_texture_owned(
-        get_quad_context().new_render_texture(miniquad::TextureParams {
-            width, height, ..Default::default()
-        }),
-    );
+    let texture = Texture2D::from_miniquad_texture_owned(get_quad_context().new_render_texture(
+        miniquad::TextureParams {
+            width,
+            height,
+            ..Default::default()
+        },
+    ));
     render_target_with_texture(texture, params)
 }
 
-/// Create a pass resolving into an existing owned texture. All attachments
-/// remain alive until the last render target clone is dropped.
+/// Render into an existing single-sampled color texture, either directly or
+/// as the resolve destination when multisampling is available. Keep an owned
+/// `Texture2D` (for example, one returned by `render_target` or made by taking
+/// ownership of a Miniquad render texture) so its lifetime follows the target.
+///
+/// # Panics
+///
+/// Panics if the texture is not a single-sampled 2D color attachment for the
+/// active backend. In particular, Vulkan textures created with `from_rgba8`
+/// cannot be used here: they do not have render attachment usage.
 pub fn render_target_with_texture(texture: Texture2D, params: RenderTargetParams) -> RenderTarget {
+    use miniquad::{TextureFormat, TextureKind, TextureParams};
+
     let id = texture.raw_miniquad_id();
-    let (width, height) = get_quad_context().texture_size(id);
-    let color_texture = if params.sample_count > 1 {
-        Texture2D::from_miniquad_texture_owned(get_quad_context().new_render_texture(
-            miniquad::TextureParams { width, height, sample_count: params.sample_count,
-                format: get_quad_context().texture_params(id).format, ..Default::default() }
-        ))
-    } else { texture.clone() };
-    let depth_texture = params.depth.then(|| Texture2D::from_miniquad_texture_owned(
-        get_quad_context().new_render_texture(miniquad::TextureParams {
-            width, height, format: miniquad::TextureFormat::Depth,
-            sample_count: params.sample_count, ..Default::default()
-        })
-    ));
+    let ctx = get_quad_context();
+    let TextureParams {
+        width,
+        height,
+        kind,
+        format,
+        sample_count: texture_samples,
+        ..
+    } = ctx.texture_params(id);
+    assert!(
+        kind == TextureKind::Texture2D
+            && texture_samples == 1
+            && !matches!(format, TextureFormat::Depth | TextureFormat::Depth32)
+            && ctx.texture_supports_color_attachment(id),
+        "render_target_with_texture requires a single-sampled 2D texture with color attachment usage"
+    );
+
+    // Use the backend's common count for both attachments and for deciding
+    // whether to resolve. On Vulkan, 2x falls back to 1x if only 1x and 4x exist.
+    let depth_format = params.depth.then_some(TextureFormat::Depth);
+    let sample_count = ctx.render_target_sample_count(format, depth_format, params.sample_count);
+    let color_texture = if sample_count > 1 {
+        Texture2D::from_miniquad_texture_owned(get_quad_context().new_render_texture(TextureParams {
+            width,
+            height,
+            sample_count,
+            format,
+            ..Default::default()
+        }))
+    } else {
+        texture.clone()
+    };
+    let depth_texture = depth_format.map(|format| {
+        Texture2D::from_miniquad_texture_owned(get_quad_context().new_render_texture(TextureParams {
+            width,
+            height,
+            format,
+            sample_count,
+            ..Default::default()
+        }))
+    });
+    let color_id = color_texture.raw_miniquad_id();
+    let depth_id = depth_texture.as_ref().map(Texture2D::raw_miniquad_id);
+    let resolve_texture = (sample_count > 1).then(|| texture.clone());
     let resolve = [id];
     let pass = get_quad_context().new_render_pass_mrt(
-        &[color_texture.raw_miniquad_id()],
-        (params.sample_count > 1).then_some(resolve.as_slice()),
-        depth_texture.as_ref().map(Texture2D::raw_miniquad_id),
+        &[color_id],
+        (sample_count > 1).then_some(resolve.as_slice()),
+        depth_id,
     );
-    let resolve_texture = (params.sample_count > 1).then(|| texture.clone());
-    RenderTarget { texture, render_pass: RenderPass {
-        color_texture, depth_texture,
-        resolve_texture,
-        render_pass: Arc::new(pass)
-    }}
+    RenderTarget {
+        texture,
+        render_pass: RenderPass {
+            color_texture,
+            depth_texture,
+            resolve_texture,
+            render_pass: Arc::new(pass),
+        },
+    }
 }
 
 #[derive(Debug, Clone)]
