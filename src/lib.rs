@@ -420,13 +420,10 @@ impl Context {
     pub fn raw_miniquad_id(&self, handle: &TextureHandle) -> miniquad::TextureId {
         match handle {
             TextureHandle::Unmanaged(texture) => *texture,
-            TextureHandle::Managed(texture) => self
-                .textures
-                .texture(texture.0)
-                .unwrap_or(self.gl.white_texture),
+            TextureHandle::Managed(texture) => texture.id,
             TextureHandle::ManagedWeak(texture) => self
                 .textures
-                .texture(*texture)
+                .texture(texture.slot)
                 .unwrap_or(self.gl.white_texture),
         }
     }

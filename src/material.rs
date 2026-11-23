@@ -40,13 +40,12 @@ impl Material {
     }
 
     /// Bind a texture to a sampler listed in `MaterialParams::textures`.
-    /// Unknown names log a warning and leave the bindings unchanged.
+    /// Unset bindings use white. The material keeps managed textures alive,
+    /// including live weak textures; expired weak textures bind white instead.
+    /// Unmanaged textures remain the caller's responsibility. Unknown names
+    /// log a warning and leave the bindings unchanged.
     pub fn set_texture(&self, name: &str, texture: Texture2D) {
-        let context = get_context();
-        let id = context.raw_miniquad_id(&texture.texture);
-        context
-            .gl
-            .set_texture_with_id(self.pipeline.0, name, texture, id);
+        get_context().gl.set_texture(self.pipeline.0, name, texture);
     }
 }
 

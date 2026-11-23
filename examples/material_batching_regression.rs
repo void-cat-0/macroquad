@@ -1,11 +1,17 @@
-//! Run with `cargo run --example material_batching_regression` on OpenGL.
-//! Exits after checking the rendered pixels and texture binding, or panics on regression.
+//! Pixel regression for material state and texture ownership in batched draws.
+//! Run with `cargo run --example material_batching_regression` on OpenGL,
+//! or add `--features vulkan` for Vulkan on desktop Linux and Windows.
+
 use macroquad::prelude::*;
 use miniquad::gl;
 
+const WIDTH: f32 = 32.;
+const HEIGHT: f32 = 8.;
+const COLUMN: f32 = WIDTH / 4.;
 const RED_PIXEL: [u8; 4] = [255, 0, 0, 255];
 const GREEN_PIXEL: [u8; 4] = [0, 255, 0, 255];
 const BLUE_PIXEL: [u8; 4] = [0, 0, 255, 255];
+const WHITE_PIXEL: [u8; 4] = [255; 4];
 const BLACK_PIXEL: [u8; 4] = [0, 0, 0, 255];
 
 const VERTEX: &str = r#"#version 100
@@ -52,25 +58,18 @@ void main() { gl_FragColor = texture2D(sample_tex, vec2(0.5)); }
 }
 
 fn draw_column(index: u32, color: Color) {
-    let w = screen_width() / 3.;
-    draw_rectangle(index as f32 * w, 0., w, screen_height(), color);
+    draw_rectangle(index as f32 * COLUMN, 0., COLUMN, HEIGHT, color);
 }
 
-fn expect_pixel(index: u32, expected: [u8; 4], reason: &str) {
-    let (w, h) = miniquad::window::screen_size();
-    let mut pixel = [0u8; 4];
-    unsafe {
-        gl::glReadPixels(
-            ((index as f32 + 0.5) * w / 3.) as i32,
-            (h / 2.) as i32,
-            1,
-            1,
-            gl::GL_RGBA,
-            gl::GL_UNSIGNED_BYTE,
-            pixel.as_mut_ptr().cast(),
-        );
-    }
-    assert_eq!(pixel, expected, "{reason}");
+fn expect_pixel(image: &Image, index: u32, expected: [u8; 4], reason: &str) {
+    let actual: [u8; 4] = image
+        .get_pixel(index * COLUMN as u32 + COLUMN as u32 / 2, HEIGHT as u32 / 2)
+        .into();
+    assert_eq!(actual, expected, "{reason}");
+}
+
+fn flush() {
+    unsafe { get_internal_gl().flush() };
 }
 
 fn gl_integer(param: gl::GLenum) -> gl::GLint {
@@ -79,18 +78,68 @@ fn gl_integer(param: gl::GLenum) -> gl::GLint {
     value
 }
 
-fn flush() {
-    unsafe { get_internal_gl().flush() };
-}
-
-#[macroquad::main("Material batching regression")]
-async fn main() {
-    if unsafe { get_internal_gl().quad_context.info().backend } != miniquad::Backend::OpenGl {
-        warn!("Material batching regression requires OpenGL");
+fn check_screen_capture(material: &Material) {
+    if unsafe { get_internal_gl() }.quad_context.info().backend != miniquad::Backend::OpenGl {
         return;
     }
 
+    let capture = Texture2D::from_rgba8(1, 1, &BLACK_PIXEL);
+    gl_use_material(material);
+    draw_column(0, WHITE);
+    flush();
+
+    const GL_ACTIVE_TEXTURE: gl::GLenum = 0x84E0;
+    let active = gl_integer(GL_ACTIVE_TEXTURE);
+    let binding = gl_integer(gl::GL_TEXTURE_BINDING_2D);
+    assert_eq!(active as u32, gl::GL_TEXTURE0 + 2, "nonzero texture unit");
+    assert_ne!(binding, 0, "nonempty texture binding");
+    capture.grab_screen();
+    assert_eq!(gl_integer(GL_ACTIVE_TEXTURE), active, "active texture unit");
+    assert_eq!(
+        gl_integer(gl::GL_TEXTURE_BINDING_2D),
+        binding,
+        "binding on the active texture unit"
+    );
+    gl_use_default_material();
+}
+
+const USE_VULKAN: bool = cfg!(all(
+    feature = "vulkan",
+    any(windows, all(target_os = "linux", not(target_env = "ohos")))
+));
+
+fn config() -> Conf {
+    Conf {
+        window_title: "Material batching regression".to_owned(),
+        platform: miniquad::conf::Platform {
+            rendering_backend: if USE_VULKAN {
+                miniquad::conf::RenderingBackend::Vulkan
+            } else {
+                miniquad::conf::RenderingBackend::OpenGl
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[macroquad::main(config)]
+async fn main() {
+    let backend = unsafe { get_internal_gl() }.quad_context.info().backend;
+    if USE_VULKAN {
+        assert_ne!(backend, miniquad::Backend::OpenGl, "Vulkan requested");
+    } else {
+        assert_eq!(backend, miniquad::Backend::OpenGl, "OpenGL requested");
+    }
+
+    let target = render_target(WIDTH as u32, HEIGHT as u32);
+    let camera = Camera2D {
+        render_target: Some(target.clone()),
+        ..Camera2D::from_display_rect(Rect::new(0., 0., WIDTH, HEIGHT))
+    };
+    set_camera(&camera);
     clear_background(BLACK);
+
     let tint = tint_material();
     gl_use_material(&tint);
     tint.set_uniform("tint", [1f32, 0., 0., 1.]);
@@ -99,56 +148,57 @@ async fn main() {
     flush();
     draw_column(1, WHITE);
     flush();
-    expect_pixel(0, RED_PIXEL, "queued uniform");
-    expect_pixel(1, GREEN_PIXEL, "live uniform overwritten by previous flush");
+    let pixels = target.texture.get_texture_data();
+    expect_pixel(&pixels, 0, RED_PIXEL, "queued uniform");
+    expect_pixel(&pixels, 1, GREEN_PIXEL, "live uniform after flush");
     drop(tint);
 
     clear_background(BLACK);
     let material = texture_material();
+    let unset = texture_material();
+    let inactive = texture_material();
     let red = Texture2D::from_rgba8(1, 1, &RED_PIXEL);
     let green = Texture2D::from_rgba8(1, 1, &GREEN_PIXEL);
-    let red_weak = red.weak_clone();
-    let green_weak = green.weak_clone();
+    let (red_weak, green_weak) = (red.weak_clone(), green.weak_clone());
     let green_id = green.raw_miniquad_id();
     let white_id = Texture2D::empty().raw_miniquad_id();
-    let capture = Texture2D::from_rgba8(1, 1, &BLACK_PIXEL);
 
     gl_use_material(&material);
     material.set_texture("sample_tex", red);
     draw_column(0, WHITE);
-    material.set_texture("sample_tex", green);
+    inactive.set_texture("sample_tex", green.clone());
+    material.set_texture("sample_tex", green_weak.clone());
+    material.set_texture("unknown", Texture2D::empty());
+    drop((green, inactive));
     expect_pixel(
+        &target.texture.get_texture_data(),
         0,
         BLACK_PIXEL,
-        "set_texture unexpectedly flushed the draw queue",
+        "set_texture flushed the draw queue",
     );
     draw_column(1, WHITE);
     flush();
-    expect_pixel(0, RED_PIXEL, "queued texture was replaced");
-    expect_pixel(1, GREEN_PIXEL, "latest texture binding was not used");
 
-    const GL_ACTIVE_TEXTURE: gl::GLenum = 0x84E0;
-    const GL_TEXTURE_BINDING_2D: gl::GLenum = 0x8069;
-    let active = gl_integer(GL_ACTIVE_TEXTURE);
-    let binding = gl_integer(GL_TEXTURE_BINDING_2D);
-    assert_eq!(
-        active as u32,
-        gl::GL_TEXTURE0 + 2,
-        "test must exercise a nonzero unit"
-    );
-    assert_ne!(binding, 0, "test must exercise a nonempty binding");
-    capture.grab_screen();
-    assert_eq!(
-        gl_integer(GL_ACTIVE_TEXTURE),
-        active,
-        "screen capture changed active unit"
-    );
-    assert_eq!(
-        gl_integer(GL_TEXTURE_BINDING_2D),
-        binding,
-        "screen capture changed the active unit's binding"
+    // Exercise the same GPU binding storage in a second flush, after the
+    // red draw dropped the last owner but before frame-end texture collection.
+    gl_use_material(&unset);
+    draw_column(2, WHITE);
+    unset.set_texture("sample_tex", red_weak.clone());
+    draw_column(3, WHITE);
+    flush();
+    let pixels = target.texture.get_texture_data();
+    expect_pixel(&pixels, 0, RED_PIXEL, "queued texture was replaced");
+    expect_pixel(&pixels, 1, GREEN_PIXEL, "latest texture binding");
+    expect_pixel(&pixels, 2, WHITE_PIXEL, "unset slot reused an old texture");
+    expect_pixel(
+        &pixels,
+        3,
+        WHITE_PIXEL,
+        "expired weak texture must bind white",
     );
 
+    set_default_camera();
+    check_screen_capture(&material);
     next_frame().await;
     assert_eq!(
         red_weak.raw_miniquad_id(),
@@ -158,26 +208,29 @@ async fn main() {
     assert_eq!(
         green_weak.raw_miniquad_id(),
         green_id,
-        "material did not retain its binding"
+        "material did not retain its weak binding"
     );
 
+    set_camera(&camera);
     clear_background(BLACK);
     gl_use_material(&material);
     draw_column(0, WHITE);
     drop(material);
-    draw_column(1, color_u8!(0, 0, 255, 255));
+    draw_column(1, Color::from_rgba(0, 0, 255, 255));
     let replacement = tint_material();
     replacement.set_uniform("tint", [1f32, 0., 0., 1.]);
     gl_use_material(&replacement);
     draw_column(2, WHITE);
-    flush();
+    set_default_camera();
+    let pixels = target.texture.get_texture_data();
     expect_pixel(
+        &pixels,
         0,
         GREEN_PIXEL,
-        "pipeline was removed or reused before queued draw",
+        "pipeline removed or reused before its queued draw",
     );
-    expect_pixel(1, BLUE_PIXEL, "dropped material remained selected");
-    expect_pixel(2, RED_PIXEL, "replacement material failed");
+    expect_pixel(&pixels, 1, BLUE_PIXEL, "dropped material remained selected");
+    expect_pixel(&pixels, 2, RED_PIXEL, "replacement material failed");
     drop(replacement);
 
     next_frame().await;

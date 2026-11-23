@@ -710,6 +710,7 @@ impl QuadGl {
 
         let white_texture = self.white_texture;
 
+        // Draw-call slots only grow; allocate one binding per new slot.
         for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
             let vertex_buffer = ctx.new_buffer(
                 BufferType::VertexBuffer,
@@ -729,7 +730,6 @@ impl QuadGl {
 
             self.draw_calls_bindings.push(bindings);
         }
-        assert_eq!(self.draw_calls_bindings.len(), self.draw_calls.len());
 
         let (screen_width, screen_height) = miniquad::window::screen_size();
         let time = (miniquad::date::now() - self.start_time) as f32;
@@ -825,11 +825,6 @@ impl QuadGl {
                 current_pass = None;
                 telemetry::track_drawcall(&pipeline.pipeline, bindings, dc.indices_count);
             }
-
-            dc.vertices_count = 0;
-            dc.indices_count = 0;
-            dc.vertices_start = 0;
-            dc.indices_start = 0;
         }
 
         if current_pass.is_some() {
@@ -973,7 +968,7 @@ impl QuadGl {
                 || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
-            if self.draw_calls_count >= self.draw_calls.len() {
+            if self.draw_calls_count == self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
                     self.state.texture,
                     self.state.model(),
@@ -998,6 +993,7 @@ impl QuadGl {
             dc.clip = self.state.clip;
             dc.viewport = self.state.viewport;
             dc.model = self.state.model();
+            dc.draw_mode = self.state.draw_mode;
             dc.pipeline = pip;
             dc.render_pass = self.state.render_pass;
             dc.capture = self.state.capture;
@@ -1047,36 +1043,24 @@ impl QuadGl {
     }
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
-        let id = texture.raw_miniquad_id();
-        self.set_texture_with_id(pipeline, name, texture, id);
-    }
-
-    pub(crate) fn set_texture_with_id(
-        &mut self,
-        pipeline: GlPipeline,
-        name: &str,
-        texture: Texture2D,
-        id: MiniquadTexture,
-    ) {
         let active = self.state.pipeline == Some(pipeline);
         let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
-        let texture = MaterialTexture {
-            id,
-            _owner: texture,
-        };
+        let texture = texture
+            .into_owned_binding()
+            .map(|(id, owner)| MaterialTexture { id, _owner: owner });
         let mut found = false;
-        for (slot_name, slot) in pipeline
+        for (slot_name, binding) in pipeline
             .texture_names
             .iter()
             .zip(&mut pipeline.texture_bindings)
         {
             if slot_name == name {
-                *slot = Some(texture.clone());
+                *binding = texture.clone();
                 found = true;
             }
         }
         if !found {
-            warn!("unknown material texture '{name}'");
+            warn!("unknown material texture '{}'", name);
             return;
         }
         // Split only the affected batch. Previously queued geometry keeps its
@@ -1094,10 +1078,6 @@ impl QuadGl {
         self.max_indices = max_indices;
         self.clear_draw_calls();
 
-        for draw_call in &mut self.draw_calls {
-            draw_call.indices_start = 0;
-            draw_call.vertices_start = 0;
-        }
         for binding in &mut self.draw_calls_bindings {
             ctx.delete_buffer(binding.index_buffer);
             for vertex_buffer in &binding.vertex_buffers {

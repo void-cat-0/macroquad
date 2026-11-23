@@ -9,26 +9,45 @@ pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
 use slotmap::{TextureIdSlotMap, TextureSlotId};
-use std::sync::{Arc, Mutex};
+use std::{
+    alloc::Layout,
+    sync::{Arc, Mutex, Weak},
+};
 
 mod slotmap;
 
 type RemovalQueue = Arc<Mutex<Vec<TextureSlotId>>>;
 
-pub(crate) struct TextureSlotGuarded(pub TextureSlotId, RemovalQueue);
+pub(crate) struct TextureSlotGuarded {
+    slot: TextureSlotId,
+    pub(crate) id: miniquad::TextureId,
+    removed: RemovalQueue,
+}
 
 impl std::fmt::Debug for TextureSlotGuarded {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_tuple("TextureSlotGuarded")
-            .field(&self.0)
+            .field(&self.slot)
             .finish()
     }
 }
 
 impl PartialEq for TextureSlotGuarded {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.slot == other.slot
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TextureSlotWeak {
+    pub slot: TextureSlotId,
+    owner: Weak<TextureSlotGuarded>,
+}
+
+impl PartialEq for TextureSlotWeak {
+    fn eq(&self, other: &Self) -> bool {
+        self.slot == other.slot
     }
 }
 
@@ -36,7 +55,7 @@ impl PartialEq for TextureSlotGuarded {
 pub(crate) enum TextureHandle {
     // texture that belongs to macroquad and follows normal garbage collection rules
     Managed(Arc<TextureSlotGuarded>),
-    ManagedWeak(TextureSlotId),
+    ManagedWeak(TextureSlotWeak),
     // raw miniquad texture, there are no guarantees that this texture is not yet deleted
     Unmanaged(miniquad::TextureId),
 }
@@ -62,10 +81,11 @@ impl TexturesContext {
         self.removed_render_passes.push(pass);
     }
     fn store_texture(&mut self, texture: miniquad::TextureId) -> TextureHandle {
-        TextureHandle::Managed(Arc::new(TextureSlotGuarded(
-            self.textures.insert(texture),
-            self.removed.clone(),
-        )))
+        TextureHandle::Managed(Arc::new(TextureSlotGuarded {
+            slot: self.textures.insert(texture),
+            id: texture,
+            removed: self.removed.clone(),
+        }))
     }
     pub fn texture(&self, texture: TextureSlotId) -> Option<miniquad::TextureId> {
         self.textures.get(texture)
@@ -658,7 +678,7 @@ pub struct Texture2D {
 impl Drop for TextureSlotGuarded {
     fn drop(&mut self) {
         crate::thread_assert::same_thread();
-        self.1.lock().unwrap().push(self.0);
+        self.removed.lock().unwrap().push(self.slot);
     }
 }
 
@@ -667,13 +687,29 @@ impl Texture2D {
         match &self.texture {
             TextureHandle::Unmanaged(id) => Texture2D::unmanaged(*id),
             TextureHandle::Managed(t) => Texture2D {
-                texture: TextureHandle::ManagedWeak(t.0),
+                texture: TextureHandle::ManagedWeak(TextureSlotWeak {
+                    slot: t.slot,
+                    owner: Arc::downgrade(t),
+                }),
             },
-            TextureHandle::ManagedWeak(t) => Texture2D {
-                texture: TextureHandle::ManagedWeak(*t),
-            },
+            TextureHandle::ManagedWeak(_) => self.clone(),
         }
     }
+    // Resolve once, keeping managed bindings alive independently of the slot
+    // map. Do not cache the ID of a weak texture awaiting garbage collection.
+    pub(crate) fn into_owned_binding(self) -> Option<(miniquad::TextureId, Self)> {
+        match &self.texture {
+            TextureHandle::Unmanaged(id) => Some((*id, self)),
+            TextureHandle::Managed(owner) => Some((owner.id, self)),
+            TextureHandle::ManagedWeak(weak) => {
+                let owner = weak.owner.upgrade()?;
+                let id = owner.id;
+                let texture = TextureHandle::Managed(owner);
+                Some((id, Self { texture }))
+            }
+        }
+    }
+
     pub(crate) const fn unmanaged(texture: miniquad::TextureId) -> Texture2D {
         Texture2D {
             texture: TextureHandle::Unmanaged(texture),
@@ -958,18 +994,26 @@ impl Texture2D {
         let texture = self.raw_miniquad_id();
         let params = ctx.texture_params(texture);
         let (width, height) = (params.width, params.height);
-        assert!(width <= u16::MAX as u32 && height <= u16::MAX as u32,
-            "Texture dimensions exceed Image dimensions");
+        assert!(
+            width <= u16::MAX as u32 && height <= u16::MAX as u32,
+            "Texture dimensions exceed Image dimensions"
+        );
         let channels = match params.format {
             miniquad::TextureFormat::RGBA8 => 4,
             miniquad::TextureFormat::RGB8 => 3,
             miniquad::TextureFormat::Alpha => 1,
             _ => panic!("Image requires an 8-bit color texture"),
         };
-        let mut bytes = vec![0; width as usize * height as usize * channels];
+        // Two u16 dimensions fit as a pixel count, but the RGBA allocation
+        // might not fit the address space on 32-bit targets.
+        let pixels = width as usize * height as usize;
+        let rgba_bytes = Layout::array::<[u8; 4]>(pixels)
+            .expect("Image byte count exceeds the allocation limit")
+            .size();
+        let mut bytes = vec![0; pixels * channels];
         ctx.texture_read_pixels(texture, &mut bytes);
         if channels != 4 {
-            let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+            let mut rgba = Vec::with_capacity(rgba_bytes);
             for pixel in bytes.chunks_exact(channels) {
                 if channels == 3 {
                     rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);

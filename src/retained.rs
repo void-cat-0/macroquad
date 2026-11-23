@@ -13,7 +13,7 @@ use std::{
 };
 
 use miniquad::{
-    Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferLayout, BufferSource, BufferType,
+    Backend, BlendFactor, BlendState, BlendValue, BufferId, BufferLayout, BufferSource, BufferType,
     BufferUsage, Equation, PassAction, Pipeline, PipelineParams, RenderPass, ShaderId, ShaderMeta,
     ShaderSource, TextureId, UniformBlockLayout, UniformDesc, UniformType, VertexAttribute,
     VertexFormat,
@@ -165,7 +165,9 @@ pub fn white_texture() -> TextureId {
 /// Create, draw and drop on the rendering thread while its context is alive.
 /// The caller must keep the bound texture alive for the mesh lifetime.
 pub struct RetainedMesh {
-    bindings: Bindings,
+    vertex_buffer: BufferId,
+    index_buffer: BufferId,
+    texture: TextureId,
     index_count: i32,
     _render_thread: PhantomData<Rc<()>>,
 }
@@ -198,11 +200,9 @@ impl RetainedMesh {
             BufferSource::slice(indices),
         );
         Some(Self {
-            bindings: Bindings {
-                vertex_buffers: vec![vertex_buffer],
-                index_buffer,
-                images: vec![texture],
-            },
+            vertex_buffer,
+            index_buffer,
+            texture,
             index_count: indices.len() as i32,
             _render_thread: PhantomData,
         })
@@ -214,10 +214,8 @@ impl Drop for RetainedMesh {
         let ctx = crate::get_quad_context();
         // A shared retained pass may still reference these buffers.
         end_pass_if_active(ctx);
-        ctx.delete_buffer(self.bindings.index_buffer);
-        for buffer in &self.bindings.vertex_buffers {
-            ctx.delete_buffer(*buffer);
-        }
+        ctx.delete_buffer(self.index_buffer);
+        ctx.delete_buffer(self.vertex_buffer);
     }
 }
 
@@ -310,10 +308,12 @@ impl RetainedMaterial {
         let mut size = 0usize;
         for uniform in &all_uniforms {
             offsets.push((uniform.name.clone(), size, uniform.uniform_type));
-            size = size.checked_add(uniform.uniform_type.size() / size_of::<f32>())?;
-        }
-        if size.checked_mul(size_of::<f32>())? > i32::MAX as usize {
-            return None;
+            // The previous size fits the signed GL byte count; adding at most
+            // 16 floats cannot overflow usize, including on 32-bit targets.
+            size += uniform.uniform_type.size() / size_of::<f32>();
+            if size > i32::MAX as usize / size_of::<f32>() {
+                return None;
+            }
         }
         let uniform_data = RefCell::new(vec![0.; size]);
         let mut images = vec!["Texture".to_string()];
@@ -327,7 +327,7 @@ impl RetainedMaterial {
                 },
                 ShaderMeta {
                     uniforms: UniformBlockLayout {
-                        uniforms: all_uniforms.clone(),
+                        uniforms: all_uniforms,
                     },
                     images,
                 },
@@ -398,15 +398,12 @@ impl RetainedMaterial {
         else {
             return;
         };
-        if std::mem::discriminant(uniform_type) != std::mem::discriminant(&value_type)
-            || uniform_type.size() != std::mem::size_of_val(values)
-        {
+        if std::mem::discriminant(uniform_type) != std::mem::discriminant(&value_type) {
             return;
         }
-        let mut data = self.uniform_data.borrow_mut();
-        if let Some(destination) = data.get_mut(*offset..*offset + values.len()) {
-            destination.copy_from_slice(values);
-        }
+        // Each setter supplies exactly its type's float count; the offset and
+        // buffer size come from the same layout in `new`.
+        self.uniform_data.borrow_mut()[*offset..*offset + values.len()].copy_from_slice(values);
     }
 }
 
@@ -450,9 +447,24 @@ pub(crate) fn end_pass_if_active(ctx: &mut dyn miniquad::RenderingBackend) {
 }
 
 pub(crate) fn close_pass(ctx: &mut dyn miniquad::RenderingBackend) {
-    if ACTIVE_PASS.with(|slot| slot.borrow_mut().take()).is_some() {
-        ctx.end_render_pass();
+    let Some(ActivePass { pass: _pass }) = ACTIVE_PASS.with(|slot| slot.borrow_mut().take()) else {
+        return;
+    };
+    #[cfg(all(
+        feature = "vulkan",
+        any(
+            windows,
+            target_os = "android",
+            all(target_os = "linux", not(target_env = "ohos"))
+        )
+    ))]
+    if let Some(vk) = ctx.vulkan_context() {
+        // A synchronous operation may have ended rendering without releasing
+        // the retained target. Leave any different target alone.
+        vk.end_render_pass_if_target(_pass);
+        return;
     }
+    ctx.end_render_pass();
 }
 
 /// Draw retained meshes, optionally restricting each mesh to an index range.
@@ -540,6 +552,14 @@ fn draw_meshes_ranges_inner(
         };
         ctx.apply_uniforms(miniquad::UniformsSource::table(&uniforms));
     }
+    let mut material_images = material
+        .filter(|material| !material.textures.is_empty())
+        .map(|material| {
+            let mut images = Vec::with_capacity(1 + material.textures.len());
+            images.push(meshes[0].texture);
+            images.extend_from_slice(&material.textures);
+            images
+        });
     for (index, mesh) in meshes.iter().enumerate() {
         let (first, count) = if ranges.is_empty() {
             (0, mesh.index_count)
@@ -554,18 +574,17 @@ fn draw_meshes_ranges_inner(
             }
             (start as i32, (end - start) as i32)
         };
-        if let Some(material) = material {
-            let mut images = Vec::with_capacity(1 + material.textures.len());
-            images.push(mesh.bindings.images[0]);
-            images.extend_from_slice(&material.textures);
-            ctx.apply_bindings(&Bindings {
-                vertex_buffers: mesh.bindings.vertex_buffers.clone(),
-                index_buffer: mesh.bindings.index_buffer,
-                images,
-            });
+        let images = if let Some(images) = &mut material_images {
+            images[0] = mesh.texture;
+            images.as_slice()
         } else {
-            ctx.apply_bindings(&mesh.bindings);
-        }
+            std::slice::from_ref(&mesh.texture)
+        };
+        ctx.apply_bindings_from_slice(
+            std::slice::from_ref(&mesh.vertex_buffer),
+            mesh.index_buffer,
+            images,
+        );
         ctx.draw(first, count, 1);
     }
 }
