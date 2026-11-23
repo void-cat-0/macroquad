@@ -9,12 +9,28 @@ pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
 use slotmap::{TextureIdSlotMap, TextureSlotId};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 mod slotmap;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TextureSlotGuarded(pub TextureSlotId);
+type RemovalQueue = Arc<Mutex<Vec<TextureSlotId>>>;
+
+pub(crate) struct TextureSlotGuarded(pub TextureSlotId, RemovalQueue);
+
+impl std::fmt::Debug for TextureSlotGuarded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("TextureSlotGuarded")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+impl PartialEq for TextureSlotGuarded {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TextureHandle {
@@ -27,25 +43,29 @@ pub(crate) enum TextureHandle {
 
 pub(crate) struct TexturesContext {
     textures: TextureIdSlotMap,
-    removed: Vec<TextureSlotId>,
+    // A last strong reference can be released while QuadGl is borrowed.
+    // Queue removals without borrowing the global Context again in Drop.
+    removed: RemovalQueue,
+    collecting: Vec<TextureSlotId>,
     removed_render_passes: Vec<miniquad::RenderPass>,
 }
 impl TexturesContext {
     pub fn new() -> TexturesContext {
         TexturesContext {
             textures: TextureIdSlotMap::new(),
-            removed: Vec::with_capacity(200),
+            removed: Arc::new(Mutex::new(Vec::with_capacity(200))),
+            collecting: Vec::new(),
             removed_render_passes: Vec::with_capacity(10),
         }
-    }
-    fn schedule_removed(&mut self, texture: TextureSlotId) {
-        self.removed.push(texture);
     }
     fn schedule_render_pass_removed(&mut self, pass: miniquad::RenderPass) {
         self.removed_render_passes.push(pass);
     }
     fn store_texture(&mut self, texture: miniquad::TextureId) -> TextureHandle {
-        TextureHandle::Managed(Arc::new(TextureSlotGuarded(self.textures.insert(texture))))
+        TextureHandle::Managed(Arc::new(TextureSlotGuarded(
+            self.textures.insert(texture),
+            self.removed.clone(),
+        )))
     }
     pub fn texture(&self, texture: TextureSlotId) -> Option<miniquad::TextureId> {
         self.textures.get(texture)
@@ -62,7 +82,15 @@ impl TexturesContext {
             ctx.delete_render_pass(pass);
         }
 
-        for texture in self.removed.drain(0..) {
+        // Keep the queue unlocked during backend calls, reusing its allocation.
+        {
+            let mut removed = self.removed.lock().unwrap();
+            if removed.is_empty() {
+                return;
+            }
+            std::mem::swap(&mut *removed, &mut self.collecting);
+        }
+        for texture in self.collecting.drain(..) {
             if let Some(texture) = self.textures.get(texture) {
                 ctx.delete_texture(texture);
             }
@@ -645,8 +673,8 @@ pub struct Texture2D {
 
 impl Drop for TextureSlotGuarded {
     fn drop(&mut self) {
-        let ctx = get_context();
-        ctx.textures.schedule_removed(self.0);
+        crate::thread_assert::same_thread();
+        self.1.lock().unwrap().push(self.0);
     }
 }
 
@@ -874,6 +902,10 @@ impl Texture2D {
             TextureFormat::Alpha => miniquad::gl::GL_R8,
         };
         unsafe {
+            // Older Miniquad releases don't expose this OpenGL enum.
+            const GL_TEXTURE_BINDING_2D: gl::GLenum = 0x8069;
+            let mut previous_texture = 0;
+            gl::glGetIntegerv(GL_TEXTURE_BINDING_2D, &mut previous_texture);
             gl::glBindTexture(gl::GL_TEXTURE_2D, raw_id);
             gl::glCopyTexImage2D(
                 gl::GL_TEXTURE_2D,
@@ -885,6 +917,7 @@ impl Texture2D {
                 params.height as _,
                 0,
             );
+            gl::glBindTexture(gl::GL_TEXTURE_2D, previous_texture as _);
         }
     }
 

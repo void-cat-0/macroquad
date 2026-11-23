@@ -19,6 +19,13 @@ pub enum DrawMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlPipeline(usize);
 
+#[derive(Clone)]
+struct MaterialTexture {
+    id: MiniquadTexture,
+    // A managed texture may have no other strong owner by the time we flush.
+    _owner: Texture2D,
+}
+
 struct DrawCall {
     vertices_count: usize,
     indices_count: usize,
@@ -34,6 +41,7 @@ struct DrawCall {
     draw_mode: DrawMode,
     pipeline: GlPipeline,
     uniforms: Option<Vec<u8>>,
+    material_textures: Vec<Option<MaterialTexture>>,
     render_pass: Option<RenderPass>,
     capture: bool,
 }
@@ -44,7 +52,6 @@ impl DrawCall {
         model: glam::Mat4,
         draw_mode: DrawMode,
         pipeline: GlPipeline,
-        uniforms: Option<Vec<u8>>,
         render_pass: Option<RenderPass>,
     ) -> DrawCall {
         DrawCall {
@@ -58,7 +65,8 @@ impl DrawCall {
             model,
             draw_mode,
             pipeline,
-            uniforms,
+            uniforms: None,
+            material_textures: Vec::new(),
             render_pass,
             capture: false,
         }
@@ -283,19 +291,23 @@ struct Uniform {
     byte_size: usize,
 }
 
-#[derive(Clone)]
 struct PipelineExt {
     pipeline: miniquad::Pipeline,
+    shader: ShaderId,
     wants_screen_texture: bool,
     uniforms: Vec<Uniform>,
     uniforms_data: Vec<u8>,
     textures: Vec<String>,
-    textures_data: BTreeMap<String, MiniquadTexture>,
+    textures_data: BTreeMap<String, MaterialTexture>,
 }
 
 impl PipelineExt {
     fn set_uniform<T>(&mut self, name: &str, uniform: T) {
-        let uniform_meta = self.uniforms.iter().find(
+        Self::write_uniform(&self.uniforms, &mut self.uniforms_data, name, uniform);
+    }
+
+    fn write_uniform<T>(uniforms: &[Uniform], data: &mut [u8], name: &str, uniform: T) {
+        let uniform_meta = uniforms.iter().find(
             |Uniform {
                  name: uniform_name, ..
              }| uniform_name == name,
@@ -325,11 +337,8 @@ impl PipelineExt {
         macro_rules! transmute_uniform {
             ($uniform_size:expr, $byte_offset:expr, $n:expr) => {
                 if $uniform_size == $n {
-                    let data: [u8; $n] = unsafe { std::mem::transmute_copy(&uniform) };
-
-                    for i in 0..$uniform_size {
-                        self.uniforms_data[$byte_offset + i] = data[i];
-                    }
+                    let bytes: [u8; $n] = unsafe { std::mem::transmute_copy(&uniform) };
+                    data[$byte_offset..$byte_offset + $n].copy_from_slice(&bytes);
                 }
             };
         }
@@ -373,6 +382,7 @@ impl PipelineExt {
 struct PipelinesStorage {
     pipelines: Vec<Option<PipelineExt>>,
     first_hole: usize,
+    removed: Vec<GlPipeline>,
 }
 
 impl PipelinesStorage {
@@ -409,6 +419,7 @@ impl PipelinesStorage {
         let mut storage = PipelinesStorage {
             pipelines: Default::default(),
             first_hole: 0,
+            removed: Vec::new(),
         };
 
         let triangles_pipeline = storage.make_pipeline(
@@ -491,7 +502,11 @@ impl PipelinesStorage {
             params,
         );
 
-        while self.pipelines.get(self.first_hole).map_or(false, |it| it.is_some()) {
+        while self
+            .pipelines
+            .get(self.first_hole)
+            .map_or(false, |it| it.is_some())
+        {
             self.first_hole += 1;
         }
         if self.first_hole == self.pipelines.len() {
@@ -524,6 +539,7 @@ impl PipelinesStorage {
 
         self.pipelines[id] = Some(PipelineExt {
             pipeline,
+            shader,
             wants_screen_texture,
             uniforms,
             uniforms_data: vec![0; max_offset],
@@ -548,8 +564,19 @@ impl PipelinesStorage {
     }
 
     fn delete_pipeline(&mut self, pip: GlPipeline) {
-        self.pipelines[pip.0] = None;
-        self.first_hole = self.first_hole.min(pip.0);
+        // Only custom pipelines may be removed; the built-ins share a shader.
+        assert!(pip.0 > Self::LINES_DEPTH_PIPELINE.0);
+        self.removed.push(pip);
+    }
+
+    fn garbage_collect(&mut self, ctx: &mut dyn RenderingBackend) {
+        for pip in self.removed.drain(..) {
+            if let Some(pipeline) = self.pipelines[pip.0].take() {
+                ctx.delete_pipeline(pipeline.pipeline);
+                ctx.delete_shader(pipeline.shader);
+                self.first_hole = self.first_hole.min(pip.0);
+            }
+        }
     }
 }
 
@@ -666,7 +693,12 @@ impl QuadGl {
 
     /// Reset only draw calls state
     pub fn clear_draw_calls(&mut self) {
+        for dc in &mut self.draw_calls[..self.draw_calls_count] {
+            dc.material_textures.clear();
+        }
         self.draw_calls_count = 0;
+        self.batch_index_buffer.clear();
+        self.batch_vertex_buffer.clear();
     }
 
     /// Reset internal state to known default
@@ -675,7 +707,7 @@ impl QuadGl {
         self.state.texture = None;
         self.state.model_stack = vec![glam::Mat4::IDENTITY];
 
-        self.draw_calls_count = 0;
+        self.clear_draw_calls();
     }
 
     pub fn draw(&mut self, ctx: &mut dyn miniquad::RenderingBackend, projection: glam::Mat4) {
@@ -766,15 +798,12 @@ impl QuadGl {
                 .snapshotter
                 .screen_texture
                 .unwrap_or(white_texture);
-            bindings
-                .images
-                .resize(2 + pipeline.textures.len(), white_texture);
-
-            for (pos, name) in pipeline.textures.iter().enumerate() {
-                if let Some(texture) = pipeline.textures_data.get(name).copied() {
-                    bindings.images[2 + pos] = texture;
-                }
-            }
+            bindings.images.truncate(2);
+            bindings.images.extend(
+                dc.material_textures
+                    .iter()
+                    .map(|texture| texture.as_ref().map_or(white_texture, |texture| texture.id)),
+            );
 
             ctx.apply_pipeline(&pipeline.pipeline);
             if let Some((x, y, w, h)) = dc.viewport {
@@ -789,18 +818,12 @@ impl QuadGl {
             }
             ctx.apply_bindings(bindings);
 
-            if let Some(ref uniforms) = dc.uniforms {
-                for i in 0..uniforms.len() {
-                    pipeline.uniforms_data[i] = uniforms[i];
-                }
-            }
-            pipeline.set_uniform("Projection", projection);
-            pipeline.set_uniform("Model", dc.model);
-            pipeline.set_uniform("_Time", time);
-            ctx.apply_uniforms_from_bytes(
-                pipeline.uniforms_data.as_ptr(),
-                pipeline.uniforms_data.len(),
-            );
+            // Set built-ins on the queued snapshot, not the live material.
+            let uniforms = dc.uniforms.as_mut().unwrap_or(&mut pipeline.uniforms_data);
+            PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "Projection", projection);
+            PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "Model", dc.model);
+            PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "_Time", time);
+            ctx.apply_uniforms_from_bytes(uniforms.as_ptr(), uniforms.len());
             ctx.draw(0, dc.indices_count as i32, 1);
 
             if dc.capture {
@@ -817,9 +840,8 @@ impl QuadGl {
             ctx.end_render_pass();
         }
 
-        self.draw_calls_count = 0;
-        self.batch_index_buffer.clear();
-        self.batch_vertex_buffer.clear();
+        self.clear_draw_calls();
+        self.pipelines.garbage_collect(ctx);
     }
 
     pub(crate) fn capture(&mut self, capture: bool) {
@@ -955,37 +977,41 @@ impl QuadGl {
                 || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
-            let uniforms = self.state.pipeline.map_or(None, |pipeline| {
-                Some(
-                    self.pipelines
-                        .get_quad_pipeline_mut(pipeline)
-                        .uniforms_data
-                        .clone(),
-                )
-            });
-
             if self.draw_calls_count >= self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
                     self.state.texture,
                     self.state.model(),
                     self.state.draw_mode,
                     pip,
-                    uniforms.clone(),
                     self.state.render_pass,
                 ));
             }
-            self.draw_calls[self.draw_calls_count].texture = self.state.texture;
-            self.draw_calls[self.draw_calls_count].uniforms = uniforms;
-            self.draw_calls[self.draw_calls_count].vertices_count = 0;
-            self.draw_calls[self.draw_calls_count].indices_count = 0;
-            self.draw_calls[self.draw_calls_count].clip = self.state.clip;
-            self.draw_calls[self.draw_calls_count].viewport = self.state.viewport;
-            self.draw_calls[self.draw_calls_count].model = self.state.model();
-            self.draw_calls[self.draw_calls_count].pipeline = pip;
-            self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
-            self.draw_calls[self.draw_calls_count].capture = self.state.capture;
-            self.draw_calls[self.draw_calls_count].indices_start = self.batch_index_buffer.len();
-            self.draw_calls[self.draw_calls_count].vertices_start = self.batch_vertex_buffer.len();
+            let dc = &mut self.draw_calls[self.draw_calls_count];
+            if self.state.pipeline.is_some() {
+                let pipeline = self.pipelines.get_quad_pipeline_mut(pip);
+                dc.uniforms
+                    .get_or_insert_with(Vec::new)
+                    .clone_from(&pipeline.uniforms_data);
+                dc.material_textures.extend(
+                    pipeline
+                        .textures
+                        .iter()
+                        .map(|name| pipeline.textures_data.get(name).cloned()),
+                );
+            } else {
+                dc.uniforms = None;
+            }
+            dc.texture = self.state.texture;
+            dc.vertices_count = 0;
+            dc.indices_count = 0;
+            dc.clip = self.state.clip;
+            dc.viewport = self.state.viewport;
+            dc.model = self.state.model();
+            dc.pipeline = pip;
+            dc.render_pass = self.state.render_pass;
+            dc.capture = self.state.capture;
+            dc.indices_start = self.batch_index_buffer.len();
+            dc.vertices_start = self.batch_vertex_buffer.len();
 
             self.draw_calls_count += 1;
             self.state.break_batching = false;
@@ -998,11 +1024,14 @@ impl QuadGl {
 
         dc.vertices_count += vertices.len();
         dc.indices_count += indices.len();
-
-        dc.texture = self.state.texture;
     }
 
     pub fn delete_pipeline(&mut self, pipeline: GlPipeline) {
+        // A dropped material should stop affecting new draws, but its queued
+        // draws still need both the pipeline and its shader.
+        if self.state.pipeline == Some(pipeline) {
+            self.pipeline(None);
+        }
         self.pipelines.delete_pipeline(pipeline);
     }
 
@@ -1027,22 +1056,27 @@ impl QuadGl {
     }
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
-        let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
-        pipeline
-            .textures
-            .iter()
-            .find(|x| *x == name)
-            .unwrap_or_else(|| {
-                panic!(
-                    "can't find texture with name '{}', there is only this names: {:?}",
-                    name, pipeline.textures
-                )
-            });
-        let quad_texture = texture.raw_miniquad_id();
-        *pipeline
+        let active = self.state.pipeline == Some(pipeline);
+        {
+            let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
+            assert!(
+                pipeline.textures.iter().any(|slot| slot == name),
+                "can't find texture with name '{}', there is only this names: {:?}",
+                name,
+                pipeline.textures
+            );
+        }
+        let texture = MaterialTexture {
+            id: texture.raw_miniquad_id(),
+            _owner: texture,
+        };
+        self.pipelines
+            .get_quad_pipeline_mut(pipeline)
             .textures_data
-            .entry(name.to_owned())
-            .or_insert(quad_texture) = quad_texture;
+            .insert(name.to_owned(), texture);
+        // Split only the affected batch. Previously queued geometry keeps its
+        // own bindings and can still be submitted at the normal flush point.
+        self.state.break_batching |= active;
     }
 
     pub(crate) fn update_drawcall_capacity(
@@ -1053,7 +1087,7 @@ impl QuadGl {
     ) {
         self.max_vertices = max_vertices;
         self.max_indices = max_indices;
-        self.draw_calls_count = 0;
+        self.clear_draw_calls();
 
         for draw_call in &mut self.draw_calls {
             draw_call.indices_start = 0;
