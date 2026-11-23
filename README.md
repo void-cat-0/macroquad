@@ -101,7 +101,10 @@ cargo build --target wasm32-unknown-unknown
 
 This will produce .wasm file in `target/wasm32-unknown-unknown/debug/CRATENAME.wasm` or in `target/wasm32-unknown-unknown/release/CRATENAME.wasm` if built with `--release`.
 
-And then use the following .html to load it:
+And then use the following .html to load it. For builds from this fork, use
+this checkout's `js/mq_js_bundle.js` instead of the upstream CDN script below.
+Apps that don't use bundled plugins can use `js/gl.js` from their matching
+Miniquad checkout. WebGL 2 texture transfers rely on the matching GL host.
 
 <details><summary>index.html</summary>
 
