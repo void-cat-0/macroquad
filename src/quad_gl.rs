@@ -6,8 +6,6 @@ pub use miniquad::{FilterMode, TextureId as MiniquadTexture, UniformDesc};
 
 use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, tobytes::ToBytes, Error};
 
-use std::collections::BTreeMap;
-
 pub(crate) use crate::models::Vertex;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -297,8 +295,8 @@ struct PipelineExt {
     wants_screen_texture: bool,
     uniforms: Vec<Uniform>,
     uniforms_data: Vec<u8>,
-    textures: Vec<String>,
-    textures_data: BTreeMap<String, MaterialTexture>,
+    texture_names: Vec<String>,
+    texture_bindings: Vec<Option<MaterialTexture>>,
 }
 
 impl PipelineExt {
@@ -543,8 +541,8 @@ impl PipelinesStorage {
             wants_screen_texture,
             uniforms,
             uniforms_data: vec![0; max_offset],
-            textures,
-            textures_data: BTreeMap::new(),
+            texture_bindings: vec![None; textures.len()],
+            texture_names: textures,
         });
 
         GlPipeline(id)
@@ -564,8 +562,6 @@ impl PipelinesStorage {
     }
 
     fn delete_pipeline(&mut self, pip: GlPipeline) {
-        // Only custom pipelines may be removed; the built-ins share a shader.
-        assert!(pip.0 > Self::LINES_DEPTH_PIPELINE.0);
         self.removed.push(pip);
     }
 
@@ -992,12 +988,7 @@ impl QuadGl {
                 dc.uniforms
                     .get_or_insert_with(Vec::new)
                     .clone_from(&pipeline.uniforms_data);
-                dc.material_textures.extend(
-                    pipeline
-                        .textures
-                        .iter()
-                        .map(|name| pipeline.textures_data.get(name).cloned()),
-                );
+                dc.material_textures.clone_from(&pipeline.texture_bindings);
             } else {
                 dc.uniforms = None;
             }
@@ -1056,24 +1047,38 @@ impl QuadGl {
     }
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
+        let id = texture.raw_miniquad_id();
+        self.set_texture_with_id(pipeline, name, texture, id);
+    }
+
+    pub(crate) fn set_texture_with_id(
+        &mut self,
+        pipeline: GlPipeline,
+        name: &str,
+        texture: Texture2D,
+        id: MiniquadTexture,
+    ) {
         let active = self.state.pipeline == Some(pipeline);
-        {
-            let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
-            assert!(
-                pipeline.textures.iter().any(|slot| slot == name),
-                "can't find texture with name '{}', there is only this names: {:?}",
-                name,
-                pipeline.textures
-            );
-        }
+        let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
         let texture = MaterialTexture {
-            id: texture.raw_miniquad_id(),
+            id,
             _owner: texture,
         };
-        self.pipelines
-            .get_quad_pipeline_mut(pipeline)
-            .textures_data
-            .insert(name.to_owned(), texture);
+        let mut found = false;
+        for (slot_name, slot) in pipeline
+            .texture_names
+            .iter()
+            .zip(&mut pipeline.texture_bindings)
+        {
+            if slot_name == name {
+                *slot = Some(texture.clone());
+                found = true;
+            }
+        }
+        if !found {
+            warn!("unknown material texture '{name}'");
+            return;
+        }
         // Split only the affected batch. Previously queued geometry keeps its
         // own bindings and can still be submitted at the normal flush point.
         self.state.break_batching |= active;

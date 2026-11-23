@@ -39,8 +39,14 @@ impl Material {
             .set_uniform_array(self.pipeline.0, name, uniform);
     }
 
+    /// Bind a texture to a sampler listed in `MaterialParams::textures`.
+    /// Unknown names log a warning and leave the bindings unchanged.
     pub fn set_texture(&self, name: &str, texture: Texture2D) {
-        get_context().gl.set_texture(self.pipeline.0, name, texture);
+        let context = get_context();
+        let id = context.raw_miniquad_id(&texture.texture);
+        context
+            .gl
+            .set_texture_with_id(self.pipeline.0, name, texture, id);
     }
 }
 
