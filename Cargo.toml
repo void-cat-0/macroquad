@@ -31,7 +31,7 @@ all-features = true
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(one_screenshot)'] }
 
 [dependencies]
-miniquad = { git = "https://github.com/void-cat-0/miniquad", features = ["log-impl"] }
+miniquad = { git = "https://github.com/void-cat-0/miniquad", features = ["log-impl"], branch = "vulkan" }
 # miniquad = { path = "../miniquad", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
