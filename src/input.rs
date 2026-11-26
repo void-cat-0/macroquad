@@ -163,10 +163,13 @@ pub fn get_ime_preedit() -> Option<(String, usize)> {
     }
 }
 
-/// Return the next IME commit event, if any.
+/// Return the next IME commit event, if any, oldest first.
 pub fn get_ime_commit() -> Option<ImeCommit> {
     let context = get_context();
-    context.ime_commit_queue.pop().map(|entry| match entry {
+    if context.ime_commit_queue.is_empty() {
+        return None;
+    }
+    Some(match context.ime_commit_queue.remove(0) {
         Some(text) => ImeCommit::Text(text),
         None => ImeCommit::Cancel,
     })
@@ -229,6 +232,7 @@ pub fn clear_input_queue() {
     context.chars_pressed_ui_queue.clear();
     context.mouse_pressed.clear();
     context.keys_pressed.clear();
+    context.ime_commit_queue.clear();
 }
 
 /// Detect if the button is being pressed

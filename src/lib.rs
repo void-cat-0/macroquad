@@ -291,6 +291,27 @@ enum MiniquadInputEvent {
     },
     WindowMinimized,
     WindowRestored,
+    ImePreedit {
+        text: String,
+        cursor: usize,
+    },
+    ImeCommit(Option<String>),
+    ImeState {
+        text: String,
+        selection_start: usize,
+        selection_end: usize,
+        composing_start: Option<usize>,
+        composing_end: Option<usize>,
+        element_id: u64,
+    },
+    TextInputAction(miniquad::TextInputAction),
+    SoftKeyboard {
+        visible: bool,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
 }
 
 impl MiniquadInputEvent {
@@ -334,6 +355,25 @@ impl MiniquadInputEvent {
             }
             WindowMinimized => t.window_minimized_event(),
             WindowRestored => t.window_restored_event(),
+            ImePreedit { text, cursor } => t.on_ime_preedit(text, *cursor),
+            ImeCommit(text) => t.on_ime_commit(text.as_deref()),
+            ImeState {
+                text,
+                selection_start,
+                selection_end,
+                composing_start,
+                composing_end,
+                element_id,
+            } => t.on_ime_state_changed(
+                text,
+                *selection_start,
+                *selection_end,
+                *composing_start,
+                *composing_end,
+                *element_id,
+            ),
+            TextInputAction(action) => t.text_input_action_event(*action),
+            SoftKeyboard { visible, x, y, w, h } => t.soft_keyboard_event(*visible, *x, *y, *w, *h),
         }
     }
 }
@@ -763,13 +803,42 @@ impl EventHandler for Stage {
     fn on_ime_preedit(&mut self, text: &str, cursor_pos: usize) {
         let context = get_context();
         context.ime_preedit = (text.to_string(), cursor_pos);
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::ImePreedit {
+                text: text.to_string(),
+                cursor: cursor_pos,
+            });
+        });
     }
 
     fn on_ime_commit(&mut self, text: Option<&str>) {
         let context = get_context();
         context.ime_preedit.0.clear();
         context.ime_preedit.1 = 0;
-        context.ime_commit_queue.push(text.map(|value| value.to_string()));
+        // Bounded: applications that never read commits do not grow it.
+        if context.ime_commit_queue.len() >= 64 {
+            context.ime_commit_queue.remove(0);
+        }
+        context
+            .ime_commit_queue
+            .push(text.map(|value| value.to_string()));
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::ImeCommit(text.map(str::to_string)));
+        });
+    }
+
+    fn text_input_action_event(&mut self, action: miniquad::TextInputAction) {
+        let context = get_context();
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::TextInputAction(action));
+        });
+    }
+
+    fn soft_keyboard_event(&mut self, visible: bool, x: f32, y: f32, w: f32, h: f32) {
+        let context = get_context();
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::SoftKeyboard { visible, x, y, w, h });
+        });
     }
 
     fn on_ime_state_changed(
@@ -789,6 +858,16 @@ impl EventHandler for Stage {
             composing_start,
             composing_end,
             element_id,
+        });
+        context.input_events.iter_mut().for_each(|arr| {
+            arr.push(MiniquadInputEvent::ImeState {
+                text: text.to_string(),
+                selection_start,
+                selection_end,
+                composing_start,
+                composing_end,
+                element_id,
+            });
         });
     }
 
