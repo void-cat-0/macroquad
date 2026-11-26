@@ -297,13 +297,20 @@ impl<'a> Editbox<'a> {
             #[cfg(target_os = "android")]
             miniquad::window::show_keyboard(true);
             *context.input_focus = Some(self.id);
-            miniquad::window::set_ime_enabled(true);
+            miniquad::window::start_text_input(miniquad::TextInputConfig {
+                kind: if self.multiline {
+                    miniquad::TextInputKind::Multiline
+                } else {
+                    miniquad::TextInputKind::Text
+                },
+                ..Default::default()
+            });
         }
         if context.input_focused(self.id) && context.input.click_down() && hovered == false {
             #[cfg(target_os = "android")]
             miniquad::window::show_keyboard(false);
             *context.input_focus = None;
-            miniquad::window::set_ime_enabled(false);
+            miniquad::window::stop_text_input();
         }
 
         let state = context
@@ -339,7 +346,10 @@ impl<'a> Editbox<'a> {
         if context.focused == false || input_focused == false {
             state.deselect();
             state.clicks_counter = 0;
-            miniquad::window::set_ime_enabled(false);
+            // Only end a session this box may have started.
+            if input_focused && miniquad::window::text_input().is_some() {
+                miniquad::window::stop_text_input();
+            }
         }
         if time - state.last_click_time > 3. * text_editor::DOUBLE_CLICK_TIME {
             state.clicks_counter = 0;
@@ -432,9 +442,11 @@ impl<'a> Editbox<'a> {
                     text_color,
                     None,
                 );
-                miniquad::window::set_ime_position(
-                    (pos.x + x) as i32,
-                    (pos.y + y + font_size as f32) as i32,
+                miniquad::window::set_text_input_rect(
+                    pos.x + x,
+                    pos.y + y + 2.,
+                    2.,
+                    font_size as f32 - 5.,
                 );
             }
 
