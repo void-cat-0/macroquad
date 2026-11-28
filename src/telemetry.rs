@@ -6,7 +6,7 @@ static mut PROFILER: Option<Profiler> = None;
 
 fn get_profiler() -> &'static mut Profiler {
     unsafe {
-        PROFILER.get_or_insert_with(|| Profiler {
+        (*std::ptr::addr_of_mut!(PROFILER)).get_or_insert_with(|| Profiler {
             frame: Frame::new(),
             queries: HashMap::new(),
             active_query: None,

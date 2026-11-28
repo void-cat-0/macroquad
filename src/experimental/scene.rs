@@ -595,9 +595,9 @@ impl Iterator for MagicVecIterator {
 
 static mut SCENE: Option<Scene> = None;
 
-unsafe fn get_scene() -> &'static mut Scene {
-    SCENE.get_or_insert_with(|| Scene::new())
-}
+unsafe fn get_scene() -> &'static mut Scene { unsafe {
+    (*std::ptr::addr_of_mut!(SCENE)).get_or_insert_with(Scene::new)
+}}
 
 pub(crate) fn allocated_memory() -> usize {
     unsafe { get_scene().arena.offset() }

@@ -36,11 +36,11 @@ impl Future for FileLoadingFuture {
 
     fn poll(self: Pin<&mut Self>, _context: &mut Context) -> Poll<Self::Output> {
         let mut contents = self.contents.lock().unwrap();
-        if let Some(contents) = contents.take() {
+        match contents.take() { Some(contents) => {
             Poll::Ready(contents)
-        } else {
+        } _ => {
             Poll::Pending
-        }
+        }}
     }
 }
 
@@ -54,9 +54,9 @@ fn waker() -> Waker {
         //     otherwise your pending future will block until the next frame"
         // )
     }
-    unsafe fn wake_by_ref(data: *const ()) {
+    unsafe fn wake_by_ref(data: *const ()) { unsafe {
         wake(data);
-    }
+    }}
     unsafe fn drop(_data: *const ()) {
         // Nothing to do
     }

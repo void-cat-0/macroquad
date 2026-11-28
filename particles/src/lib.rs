@@ -1030,11 +1030,11 @@ impl EmittersCache {
     }
 
     pub fn spawn(&mut self, pos: Vec2) {
-        let mut emitter = if let Some(emitter) = self.emitters_cache.pop() {
+        let mut emitter = match self.emitters_cache.pop() { Some(emitter) => {
             emitter
-        } else {
+        } _ => {
             Emitter::new(self.config.clone())
-        };
+        }};
 
         emitter.mesh_dirty = true;
         emitter.config.emitting = true;

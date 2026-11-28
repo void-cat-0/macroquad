@@ -79,7 +79,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         false
     };
 
-    if let TokenTree::Ident(ident) = source.next().unwrap() {
+    match source.next().unwrap() { TokenTree::Ident(ident) => {
         assert_eq!(
             format!("{}", ident),
             "async",
@@ -87,28 +87,28 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         );
 
         modified.extend(std::iter::once(TokenTree::Ident(ident)));
-    } else {
+    } _ => {
         panic!("[macroquad::main] is allowed only for async functions");
-    }
+    }}
 
-    if let TokenTree::Ident(ident) = source.next().unwrap() {
+    match source.next().unwrap() { TokenTree::Ident(ident) => {
         assert_eq!(format!("{}", ident), "fn");
 
         modified.extend(std::iter::once(TokenTree::Ident(ident)));
-    } else {
+    } _ => {
         panic!("[macroquad::main] is allowed only for functions");
-    }
+    }}
 
-    if let TokenTree::Ident(ident) = source.next().unwrap() {
+    match source.next().unwrap() { TokenTree::Ident(ident) => {
         assert_eq!(format!("{}", ident), "main");
 
         modified.extend(std::iter::once(TokenTree::Ident(Ident::new(
             "amain",
             ident.span(),
         ))));
-    } else {
+    } _ => {
         panic!("[macroquad::main] expecting main function");
-    }
+    }}
 
     modified.extend(std::iter::once(source.next().unwrap()));
 
@@ -180,23 +180,23 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let _group = next_group(&mut source);
     }
 
-    if let TokenTree::Ident(ident) = source.next().unwrap() {
+    match source.next().unwrap() { TokenTree::Ident(ident) => {
         assert_eq!(format!("{}", ident), "async");
 
         modified.extend(std::iter::once(TokenTree::Ident(ident)));
-    } else {
+    } _ => {
         panic!("[macroquad::test] is allowed only for async functions");
-    }
+    }}
 
-    if let TokenTree::Ident(ident) = source.next().unwrap() {
+    match source.next().unwrap() { TokenTree::Ident(ident) => {
         assert_eq!(format!("{}", ident), "fn");
 
         modified.extend(std::iter::once(TokenTree::Ident(ident)));
-    } else {
+    } _ => {
         panic!("[macroquad::test] is allowed only for functions");
-    }
+    }}
 
-    let test_name = if let TokenTree::Ident(ident) = source.next().unwrap() {
+    let test_name = match source.next().unwrap() { TokenTree::Ident(ident) => {
         let test_name = format!("{}", ident);
 
         modified.extend(std::iter::once(TokenTree::Ident(Ident::new(
@@ -204,9 +204,9 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ident.span(),
         ))));
         test_name
-    } else {
+    } _ => {
         panic!("[macroquad::test] expecting main function");
-    };
+    }};
 
     modified.extend(std::iter::once(source.next().unwrap()));
 

@@ -333,7 +333,7 @@ impl PipelineExt {
             return;
         }
         macro_rules! transmute_uniform {
-            ($uniform_size:expr, $byte_offset:expr, $n:expr) => {
+            ($uniform_size:expr_2021, $byte_offset:expr_2021, $n:expr_2021) => {
                 if $uniform_size == $n {
                     let bytes: [u8; $n] = unsafe { std::mem::transmute_copy(&uniform) };
                     data[$byte_offset..$byte_offset + $n].copy_from_slice(&bytes);

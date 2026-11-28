@@ -2,7 +2,8 @@
 name = "macroquad"
 version = "0.4.16"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
-edition = "2021"
+edition = "2024"
+rust-version = "1.90"
 homepage = "https://github.com/not-fl3/macroquad"
 repository = "https://github.com/not-fl3/macroquad"
 description = """

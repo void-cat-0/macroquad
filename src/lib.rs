@@ -170,8 +170,9 @@ pub(crate) mod thread_assert {
             thread_local! {
                 static CURRENT_THREAD_ID: std::thread::ThreadId = std::thread::current().id();
             }
-            assert!(THREAD_ID.is_some());
-            assert!(THREAD_ID.unwrap() == CURRENT_THREAD_ID.with(|id| *id));
+            let thread = *std::ptr::addr_of!(THREAD_ID);
+            assert!(thread.is_some());
+            assert!(thread.unwrap() == CURRENT_THREAD_ID.with(|id| *id));
         }
     }
 }
@@ -559,7 +560,7 @@ impl Context {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static mut CONTEXT: Option<Context> = None;
 
 // This is required for #[macroquad::test]
@@ -575,17 +576,22 @@ pub mod test {
 fn get_context() -> &'static mut Context {
     thread_assert::same_thread();
 
-    unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
+    unsafe {
+        (*std::ptr::addr_of_mut!(CONTEXT))
+            .as_mut()
+            .unwrap_or_else(|| panic!())
+    }
 }
 
 fn get_quad_context() -> &'static mut dyn miniquad::RenderingBackend {
     thread_assert::same_thread();
 
     unsafe {
-        assert!(CONTEXT.is_some());
+        let context = (*std::ptr::addr_of_mut!(CONTEXT))
+            .as_mut()
+            .expect("macroquad context");
+        &mut *context.quad_context
     }
-
-    unsafe { &mut *CONTEXT.as_mut().unwrap().quad_context }
 }
 
 struct Stage {
@@ -1148,7 +1154,7 @@ impl Window {
                 main_future: Box::pin(async {
                     future.await;
                     unsafe {
-                        if let Some(ctx) = CONTEXT.as_mut() {
+                        if let Some(ctx) = (*std::ptr::addr_of_mut!(CONTEXT)).as_mut() {
                             ctx.gl.reset();
                         }
                     }

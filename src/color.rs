@@ -23,7 +23,7 @@ pub struct Color {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! color_u8 {
-    ($r:expr, $g:expr, $b:expr, $a:expr) => {
+    ($r:expr_2021, $g:expr_2021, $b:expr_2021, $a:expr_2021) => {
         Color::new(
             $r as f32 / 255.,
             $g as f32 / 255.,
