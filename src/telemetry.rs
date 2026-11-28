@@ -158,7 +158,7 @@ impl Frame {
     }
 
     pub fn try_clone(&self) -> Option<Frame> {
-        if self.active_zone.is_null() == false {
+        if !self.active_zone.is_null() {
             return None;
         }
 
@@ -264,7 +264,7 @@ impl Profiler {
 
     fn end_zone(&mut self) {
         assert!(
-            self.frame.active_zone.is_null() == false,
+            !self.frame.active_zone.is_null(),
             "end_zone called without begin_zone"
         );
 

@@ -46,6 +46,12 @@ impl<T> State<T> {
     }
 }
 
+impl<T> Default for State<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub enum StateMachine<T: 'static> {
     Ready(StateMachineOwned<T>),
     InUse {
@@ -115,7 +121,7 @@ impl<T: scene::Node + 'static> StateMachine<T> {
     }
 
     /// A hack to update a state machine being part of an updating struct
-    pub fn update_detached<'a, F>(mut t: scene::RefMut<T>, mut f: F)
+    pub fn update_detached<F>(mut t: scene::RefMut<T>, mut f: F)
     where
         F: FnMut(&mut scene::RefMut<T>) -> &mut StateMachine<T>,
     {
@@ -135,13 +141,19 @@ impl<T: scene::Node + 'static> StateMachine<T> {
         f(&mut t).put_back(state_machine);
     }
 
-    pub fn update<'a>(&mut self, t: &'a mut scene::RefMut<T>) {
+    pub fn update(&mut self, t: &mut scene::RefMut<T>) {
         match self {
             StateMachine::Ready(state_machine) => {
                 state_machine.update(t, crate::time::get_frame_time())
             }
             _ => panic!(),
         }
+    }
+}
+
+impl<T: scene::Node + 'static> Default for StateMachine<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -201,5 +213,11 @@ impl<T: 'static> StateMachineOwned<T> {
         if let Some(update) = self.states[self.current_state].update.as_mut() {
             (update)(player, dt);
         }
+    }
+}
+
+impl<T: 'static> Default for StateMachineOwned<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }

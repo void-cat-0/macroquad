@@ -19,7 +19,7 @@ async fn main() {
             let dialog_size = vec2(200., 70.);
             let screen_size = vec2(screen_width(), screen_height());
             let dialog_position = screen_size / 2. - dialog_size / 2.;
-            Window::new(hash!(), dialog_position, dialog_size).ui(&mut *root_ui(), |ui| {
+            Window::new(hash!(), dialog_position, dialog_size).ui(&mut root_ui(), |ui| {
                 ui.label(None, "Do you really want to quit?");
                 ui.separator();
                 ui.same_line(60.);

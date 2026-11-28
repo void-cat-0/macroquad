@@ -27,6 +27,9 @@ opt-level = 3
 [package.metadata.docs.rs]
 all-features = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(one_screenshot)'] }
+
 [dependencies]
 miniquad = { git = "https://github.com/void-cat-0/miniquad", branch = "text-input", features = ["log-impl"] }
 quad-rand = "0.2.3"

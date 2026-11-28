@@ -167,6 +167,7 @@ impl DrawList {
             .extend(indices.iter().map(|i| i + indices_offset));
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_line(
         &mut self,
         x1: f32,
@@ -204,11 +205,17 @@ impl DrawList {
     }
 }
 
-fn get_active_draw_list<'a, 'b>(
+impl Default for DrawList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn get_active_draw_list<'a>(
     draw_lists: &'a mut Vec<DrawList>,
-    command: &'b DrawCommand,
+    command: &DrawCommand,
 ) -> &'a mut DrawList {
-    if draw_lists.len() == 0 {
+    if draw_lists.is_empty() {
         draw_lists.push(DrawList::new());
     }
 
@@ -223,7 +230,7 @@ fn get_active_draw_list<'a, 'b>(
             if !last
                 .texture
                 .as_ref()
-                .map_or(false, |t| t.texture == texture.texture)
+                .is_some_and(|t| t.texture == texture.texture)
             {
                 let clipping_zone = last.clipping_zone;
 
@@ -241,7 +248,7 @@ fn get_active_draw_list<'a, 'b>(
         | DrawCommand::DrawTriangle { .. } => {
             let (vertices, indices) = command.estimate_triangles_budget();
 
-            if last.texture != None
+            if last.texture.is_some()
                 || last.vertices.len() + vertices >= MAX_VERTICES
                 || last.indices.len() + indices >= MAX_INDICES
             {

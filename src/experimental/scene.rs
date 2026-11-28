@@ -54,10 +54,7 @@ impl<T: 'static> std::fmt::Debug for Handle<T> {
 
 impl<T: 'static> Clone for Handle<T> {
     fn clone(&self) -> Handle<T> {
-        Handle {
-            id: self.id,
-            _marker: PhantomData,
-        }
+        *self
     }
 }
 
@@ -101,9 +98,9 @@ impl<T> Handle<T> {
 
         let offset = unsafe {
             let mut base = std::mem::MaybeUninit::<T>::uninit();
-            let field = f(std::mem::transmute(base.as_mut_ptr())) as *mut _ as *mut u8;
+            let field = f(&mut *base.as_mut_ptr()) as *mut _ as *mut u8;
 
-            (field as *mut u8).offset_from(base.as_mut_ptr() as *mut u8)
+            field.offset_from(base.as_mut_ptr() as *mut u8)
         };
 
         Lens {
@@ -172,7 +169,7 @@ impl<T> std::ops::DerefMut for RefMut<T> {
 
 impl<T: 'static> Drop for RefMut<T> {
     fn drop(&mut self) {
-        assert_eq!(unsafe { *self.used }, true);
+        assert!(unsafe { *self.used });
         unsafe {
             *self.used = false;
         }
@@ -244,7 +241,7 @@ impl<'a> std::ops::DerefMut for RefMutAny<'a> {
 
 impl<'a> Drop for RefMutAny<'a> {
     fn drop(&mut self) {
-        assert_eq!(unsafe { *self.used }, true);
+        assert!(unsafe { *self.used });
 
         unsafe {
             *self.used = false;
@@ -299,7 +296,7 @@ impl Cell {
         assert!(size_of::<T>() <= self.data_len);
 
         let trait_obj = &data as &dyn NodeAny;
-        let (_, vtable) = unsafe { std::mem::transmute::<_, (*mut (), *mut ())>(trait_obj) };
+        let (_, vtable) = unsafe { std::mem::transmute::<&dyn NodeAny, (*mut (), *mut ())>(trait_obj) };
 
         self.vtable = vtable;
         self.ready = (&(Node::ready as fn(RefMut<T>)) as *const fn(RefMut<T>)).cast();
@@ -361,9 +358,8 @@ impl Scene {
             if let Some(Cell {
                 permanent: false, ..
             }) = cell
-            {
-                if let Some(cell) = cell.take() {
-                    assert!(unsafe { *cell.used == false });
+                && let Some(cell) = cell.take() {
+                    assert!(unsafe { !*cell.used });
 
                     unsafe {
                         (*cell.virtual_drop)(cell.data);
@@ -373,11 +369,10 @@ impl Scene {
 
                     self.free_nodes.push(cell);
                 }
-            }
         }
     }
 
-    pub fn get_any(&mut self, handle: HandleUntyped) -> Option<RefMutAny> {
+    pub fn get_any(&mut self, handle: HandleUntyped) -> Option<RefMutAny<'_>> {
         let handle = handle.0;
         let cell = self.nodes.get_mut(handle.id)?;
 
@@ -436,7 +431,7 @@ impl Scene {
             self.nodes[id.id] = Some(free_node);
         } else {
             let trait_obj = &data as &dyn NodeAny;
-            let (_, vtable) = unsafe { std::mem::transmute::<_, (*mut (), *mut ())>(trait_obj) };
+            let (_, vtable) = unsafe { std::mem::transmute::<&dyn NodeAny, (*mut (), *mut ())>(trait_obj) };
 
             let ptr = self.arena.alloc(size_of::<T>()) as *mut _ as *mut T;
             unsafe {
@@ -447,7 +442,7 @@ impl Scene {
             unsafe {
                 std::ptr::write(used, false);
             }
-            let used = used as *mut _ as *mut bool;
+            let used = used as *mut _;
 
             id = Id {
                 id: self.nodes.len(),
@@ -480,7 +475,7 @@ impl Scene {
     pub fn update(&mut self) {
         for node in &mut self.iter() {
             let cell = self.nodes[node.handle.0.id].as_mut().unwrap();
-            if cell.initialized == false {
+            if !cell.initialized {
                 cell.initialized = true;
 
                 let node: RefMut<()> = node.to_typed::<()>();
@@ -522,20 +517,18 @@ impl Scene {
             }
         }
 
-        for camera in self.camera.iter() {
-            if let Some(camera) = camera {
-                self.camera_pos = camera.target;
-                crate::prelude::push_camera_state();
-                crate::prelude::set_camera(&*camera);
+        for camera in self.camera.iter().flatten() {
+            self.camera_pos = camera.target;
+            crate::prelude::push_camera_state();
+            crate::prelude::set_camera(camera);
 
-                for node in &mut self.iter() {
-                    let cell = self.nodes[node.handle.0.id].as_mut().unwrap();
-                    let node: RefMut<()> = node.to_typed::<()>();
-                    unsafe { (*cell.draw)(node) };
-                }
-
-                crate::prelude::pop_camera_state();
+            for node in &mut self.iter() {
+                let cell = self.nodes[node.handle.0.id].as_mut().unwrap();
+                let node: RefMut<()> = node.to_typed::<()>();
+                unsafe { (*cell.draw)(node) };
             }
+
+            crate::prelude::pop_camera_state();
         }
 
         for id in self.dense_ongoing.drain(0..) {
@@ -613,7 +606,7 @@ pub fn clear() {
 pub fn get_node<T: Node>(handle: Handle<T>) -> RefMut<T> {
     unsafe { get_scene() }
         .get(handle)
-        .expect(&format!("No such node: {:?}", handle.id))
+        .unwrap_or_else(|| panic!("No such node: {:?}", handle.id))
 }
 
 pub fn try_get_node<T: Node>(handle: Handle<T>) -> Option<RefMut<T>> {

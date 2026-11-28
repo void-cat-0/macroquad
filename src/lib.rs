@@ -880,7 +880,7 @@ impl EventHandler for Stage {
     fn key_down_event(&mut self, keycode: KeyCode, modifiers: KeyMods, repeat: bool) {
         let context = get_context();
         context.keys_down.insert(keycode);
-        if repeat == false {
+        if !repeat {
             context.keys_pressed.insert(keycode);
         }
 
@@ -973,11 +973,10 @@ impl EventHandler for Stage {
                 }),
             );
 
-            if result == false {
-                if let Some(recovery_future) = get_context().recovery_future.take() {
+            if !result
+                && let Some(recovery_future) = get_context().recovery_future.take() {
                     self.main_future = recovery_future;
                 }
-            }
 
             {
                 let _z = telemetry::ZoneGuard::new("Event::draw end_frame");
@@ -1034,7 +1033,7 @@ impl EventHandler for Stage {
         context.keys_released.extend(context.keys_down.drain());
 
         // Announce all touches as released
-        for (_, touch) in context.touches.iter_mut() {
+        for touch in context.touches.values_mut() {
             touch.phase = input::TouchPhase::Ended;
         }
 
@@ -1081,9 +1080,9 @@ pub mod conf {
         ///
         /// Some examples when altering those values migh be convinient:
         /// - for huge 3d models that do not fit into a single draw call, increasing
-        ///     the buffer size might be easier than splitting the model.
+        ///   the buffer size might be easier than splitting the model.
         /// - when each draw_* call got its own material,
-        ///     buffer size might be reduced to save some memory
+        ///   buffer size might be reduced to save some memory
         pub draw_call_vertex_capacity: usize,
         pub draw_call_index_capacity: usize,
     }
@@ -1118,6 +1117,7 @@ impl From<miniquad::conf::Conf> for conf::Conf {
 pub struct Window {}
 
 impl Window {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(label: &str, future: impl Future<Output = ()> + 'static) {
         Window::from_config(
             conf::Conf {

@@ -52,7 +52,7 @@ async fn main() {
     }
 }
 
-const CRT_FRAGMENT_SHADER: &'static str = r#"#version 100
+const CRT_FRAGMENT_SHADER: &str = r#"#version 100
 precision lowp float;
 
 varying vec4 color;
@@ -101,7 +101,7 @@ void main() {
 }
 "#;
 
-const CRT_VERTEX_SHADER: &'static str = "#version 100
+const CRT_VERTEX_SHADER: &str = "#version 100
 attribute vec3 position;
 attribute vec2 texcoord;
 attribute vec4 color0;

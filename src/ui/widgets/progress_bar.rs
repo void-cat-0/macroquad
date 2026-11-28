@@ -91,6 +91,12 @@ impl<'a> ProgressBar<'a> {
     }
 }
 
+impl<'a> Default for ProgressBar<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ui {
     pub fn progress_bar(&mut self, label: &str, progress: f32) {
         ProgressBar::new().label(label).ui(self, progress, "");

@@ -46,6 +46,11 @@ impl<'a> InternalGlContext<'a> {
     }
 }
 
+/// # Safety
+///
+/// The returned context bypasses macroquad's batching. Call
+/// [`InternalGlContext::flush`] before issuing raw miniquad calls, and do not
+/// keep the context across frames.
 pub unsafe fn get_internal_gl<'a>() -> InternalGlContext<'a> {
     let context = get_context();
 
@@ -129,7 +134,7 @@ where
         #[cfg(feature = "backtrace")]
         let backtrace_string = format!("{:?}", backtrace::Backtrace::new());
         #[cfg(not(feature = "backtrace"))]
-        let backtrace_string = format!("Macroquad compiled without \"backtrace\" feature");
+        let backtrace_string = "Macroquad compiled without \"backtrace\" feature".to_string();
         crate::logging::error!("{}", message);
         crate::logging::error!("{}", backtrace_string);
 

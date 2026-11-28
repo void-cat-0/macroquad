@@ -222,7 +222,7 @@ impl MagicSnapshotter {
                 self.screen_texture = Some(color_img);
             }
 
-            if self.bindings.images.len() == 0 {
+            if self.bindings.images.is_empty() {
                 self.bindings.images.push(texture);
             } else {
                 self.bindings.images[0] = texture;
@@ -371,9 +371,8 @@ impl PipelineExt {
             );
             return;
         }
-        for i in 0..uniform_byte_size {
-            self.uniforms_data[uniform_byte_offset + i] = data[i];
-        }
+        self.uniforms_data[uniform_byte_offset..uniform_byte_offset + uniform_byte_size]
+            .copy_from_slice(&data[..uniform_byte_size]);
     }
 }
 
@@ -503,7 +502,7 @@ impl PipelinesStorage {
         while self
             .pipelines
             .get(self.first_hole)
-            .map_or(false, |it| it.is_some())
+            .is_some_and(|it| it.is_some())
         {
             self.first_hole += 1;
         }
@@ -960,7 +959,7 @@ impl QuadGl {
         };
         let previous_dc = previous_dc_ix.and_then(|ix| self.draw_calls.get(ix));
 
-        if previous_dc.map_or(true, |draw_call| {
+        if previous_dc.is_none_or(|draw_call| {
             draw_call.texture != self.state.texture
                 || draw_call.clip != self.state.clip
                 || draw_call.viewport != self.state.viewport

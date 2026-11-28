@@ -160,14 +160,11 @@ pub mod shaders {
     type IncludeContent = String;
 
     #[derive(Debug, Clone)]
+    #[derive(Default)]
     pub struct PreprocessorConfig {
         pub includes: Vec<(IncludeFilename, IncludeContent)>,
     }
-    impl Default for PreprocessorConfig {
-        fn default() -> PreprocessorConfig {
-            PreprocessorConfig { includes: vec![] }
-        }
-    }
+    
 
     impl PreprocessorConfig {}
 
@@ -217,9 +214,7 @@ pub mod shaders {
                 .includes
                 .iter()
                 .find(|(name, _)| name == &filename)
-                .expect(&format!(
-                    "Include file {filename} in not on \"includes\" list"
-                ));
+                .unwrap_or_else(|| panic!("Include file {filename} in not on \"includes\" list"));
 
             let _ = res
                 .splice(
@@ -261,7 +256,6 @@ qwe
             shader_string,
             &PreprocessorConfig {
                 includes: vec![("hello.glsl".to_string(), "iii\njjj".to_string())],
-                ..Default::default()
             },
         );
 

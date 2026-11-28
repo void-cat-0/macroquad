@@ -187,11 +187,11 @@ pub mod colors {
 
 #[rustfmt::skip]
 pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color {
-    let r;
-    let g;
-    let b;
+    
+    
+    
 
-    if s == 0.0 {  r = l; g = l; b = l; }
+    let (r, g, b) = if s == 0.0 {  (l, l, l) }
     else {
         fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
             if t < 0.0 { t += 1.0 }
@@ -208,10 +208,8 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color {
             l + s - l * s
         };
         let p = 2.0 * l - q;
-        r = hue_to_rgb(p, q, h + 1.0 / 3.0);
-        g = hue_to_rgb(p, q, h);
-        b = hue_to_rgb(p, q, h - 1.0 / 3.0);
-    }
+        (hue_to_rgb(p, q, h + 1.0 / 3.0), hue_to_rgb(p, q, h), hue_to_rgb(p, q, h - 1.0 / 3.0))
+    };
 
     Color::new(r, g, b, 1.0)
 }
@@ -268,7 +266,7 @@ pub fn rgb_to_hsl(color: Color) -> (f32, f32, f32) {
     // Fix wraparounds
     if h < 0 as f32 {
         h += 1.0;
-    } else if h > 1 as f32 {
+    } else if h > 1_f32 {
         h -= 1.0;
     }
 

@@ -54,7 +54,7 @@ impl<'a> Slider<'a> {
             .clone();
 
         let editbox_id = hash!(self.id, "editbox");
-        if context.input_focused(editbox_id) == false {
+        if !context.input_focused(editbox_id) {
             use std::fmt::Write;
 
             temp_string.clear();
@@ -64,13 +64,13 @@ impl<'a> Slider<'a> {
         Editbox::new(editbox_id, vec2(50., size.y))
             .position(pos)
             .multiline(false)
-            .filter(&|character| character.is_digit(10) || character == '.' || character == '-')
+            .filter(&|character| character.is_ascii_digit() || character == '.' || character == '-')
             .ui(ui, &mut temp_string);
 
         let context = ui.get_active_window_context();
         let old_string = context.storage_any.get_or_default::<String>(self.id);
-        if *old_string != temp_string {
-            if let Ok(num) = temp_string.parse::<f32>() {
+        if *old_string != temp_string
+            && let Ok(num) = temp_string.parse::<f32>() {
                 if num > self.range.end {
                     *data = self.range.end;
                 } else if num < self.range.start {
@@ -79,7 +79,6 @@ impl<'a> Slider<'a> {
                     *data = num;
                 }
             }
-        }
 
         let dragging = context
             .storage_u32
@@ -100,7 +99,7 @@ impl<'a> Slider<'a> {
             context.input.cursor_grabbed = true;
         }
 
-        if *dragging == 1 && context.input.is_mouse_down == false {
+        if *dragging == 1 && !context.input.is_mouse_down {
             context.input.cursor_grabbed = false;
             *dragging = 0;
             *context.input_focus = None;
@@ -108,8 +107,7 @@ impl<'a> Slider<'a> {
 
         if *dragging == 1 {
             let mouse_position = ((context.input.mouse_position.x - slider_start_x) / slider_width)
-                .min(1.)
-                .max(0.);
+                .clamp(0., 1.);
             let old_data = *data;
             *data = self.range.start + (self.range.end - self.range.start) * mouse_position;
 

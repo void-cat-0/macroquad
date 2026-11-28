@@ -28,6 +28,7 @@ impl Future for FrameFuture {
 }
 
 pub struct FileLoadingFuture {
+    #[allow(clippy::type_complexity)]
     pub contents: Arc<Mutex<Option<Result<Vec<u8>, Error>>>>,
 }
 

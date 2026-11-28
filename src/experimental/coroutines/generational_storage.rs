@@ -107,11 +107,10 @@ impl<T> GenerationalStorage<T> {
         // an attempt to free a cell by an outdated ID
         // this is a legit request, no need to panic or anything, just
         // dont ruin the data that lives there now
-        if let Some(cell) = &self.vec[id.id] {
-            if cell.generation != id.generation {
+        if let Some(cell) = &self.vec[id.id]
+            && cell.generation != id.generation {
                 return;
             }
-        }
 
         self.free_indices.push((id.id, id.generation));
         self.vec[id.id] = None;

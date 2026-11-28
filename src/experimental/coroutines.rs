@@ -70,17 +70,15 @@ impl CoroutinesContext {
 
     pub fn update(&mut self) {
         self.coroutines.retain(|coroutine| {
-            if let CoroutineState::Running(f) = coroutine {
-                if f.manual_poll == false {
-                    if let Some(v) = resume(&mut f.future) {
+            if let CoroutineState::Running(f) = coroutine
+                && !f.manual_poll
+                    && let Some(v) = resume(&mut f.future) {
                         if f.has_value {
                             *coroutine = CoroutineState::Value(v);
                         } else {
                             return false;
                         }
                     }
-                }
-            }
 
             true
         });
@@ -111,7 +109,7 @@ impl<T: 'static + Any> Coroutine<T> {
             return coroutine.is_value() || coroutine.is_nothing();
         }
 
-        return true;
+        true
     }
 
     pub fn retrieve(&self) -> Option<T> {

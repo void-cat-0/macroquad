@@ -142,7 +142,7 @@ pub fn is_key_released(key_code: KeyCode) -> bool {
 /// Detect if any key is being pressed
 pub fn is_any_key_down() -> bool {
     let context = get_context();
-    context.keys_down.len() > 0
+    !context.keys_down.is_empty()
 }
 
 /// Return the last pressed char.

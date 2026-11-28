@@ -38,7 +38,7 @@ async fn main() {
             platform_x -= 3.0 * delta;
         }
 
-        if stick == false {
+        if !stick {
             ball_x += dx * delta;
             ball_y += dy * delta;
         } else {
@@ -78,9 +78,9 @@ async fn main() {
             stick = true;
         }
 
-        for j in 0..BLOCKS_H {
-            for i in 0..BLOCKS_W {
-                if blocks[j][i] {
+        for (j, row) in blocks.iter_mut().enumerate() {
+            for (i, block) in row.iter_mut().enumerate() {
+                if *block {
                     let block_w = SCR_W / BLOCKS_W as f32;
                     let block_h = 7.0 / BLOCKS_H as f32;
                     let block_x = i as f32 * block_w + 0.05;
@@ -93,7 +93,7 @@ async fn main() {
                         && ball_y < block_y + block_h
                     {
                         dy *= -1.;
-                        blocks[j][i] = false;
+                        *block = false;
                     }
                 }
             }

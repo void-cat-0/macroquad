@@ -136,6 +136,7 @@ pub(crate) struct Window {
 }
 
 impl Window {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Id,
         parent: Option<Id>,
@@ -484,7 +485,7 @@ impl<'a> WindowContext<'a> {
             scroll.dragging_y = true;
             scroll.initial_scroll.y = scroll.rect.y - self.input.mouse_position.y * k;
         }
-        if scroll.dragging_y && self.input.is_mouse_down == false {
+        if scroll.dragging_y && !self.input.is_mouse_down {
             self.input.cursor_grabbed = false;
             scroll.dragging_y = false;
         }
@@ -524,7 +525,7 @@ impl<'a> WindowContext<'a> {
 
     pub fn input_focused(&self, id: Id) -> bool {
         self.input_focus
-            .map_or(false, |input_focus| input_focus == id)
+            .is_some_and(|input_focus| input_focus == id)
     }
 }
 
@@ -551,7 +552,7 @@ impl InputHandler for Ui {
         for (n, window) in self.windows_focus_order.iter().enumerate() {
             let window = &self.windows[window];
 
-            if window.was_active == false {
+            if !window.was_active {
                 continue;
             }
 
@@ -596,11 +597,10 @@ impl InputHandler for Ui {
         }
 
         match &self.modal {
-            Some(modal) if modal.was_active || modal.active => {
-                if modal.full_rect().contains(position) {
+            Some(modal) if (modal.was_active || modal.active)
+                && modal.full_rect().contains(position) => {
                     self.hovered_window = modal.id;
                 }
-            }
             _ => {}
         }
 
@@ -734,7 +734,7 @@ impl Ui {
         size: Vec2,
         titlebar: bool,
         movable: bool,
-    ) -> WindowContext {
+    ) -> WindowContext<'_> {
         if parent.is_some() {
             self.child_window_stack
                 .push(self.active_window.unwrap_or(0));
@@ -762,7 +762,7 @@ impl Ui {
             Some(parent) => self
                 .windows
                 .get(&parent)
-                .map_or(false, |window| window.force_focus),
+                .is_some_and(|window| window.force_focus),
             _ => false,
         };
         let parent_clip_rect = if let Some(parent) = parent {
@@ -824,7 +824,7 @@ impl Ui {
         }
     }
 
-    pub(crate) fn begin_modal(&mut self, id: Id, position: Vec2, size: Vec2) -> WindowContext {
+    pub(crate) fn begin_modal(&mut self, id: Id, position: Vec2, size: Vec2) -> WindowContext<'_> {
         self.input.window_active = true;
         self.in_modal = true;
 
@@ -881,9 +881,9 @@ impl Ui {
         self.input.window_active = self.is_input_hovered(self.active_window.unwrap_or(0));
     }
 
-    pub(crate) fn get_active_window_context(&mut self) -> WindowContext {
+    pub(crate) fn get_active_window_context(&mut self) -> WindowContext<'_> {
         let focused;
-        let window = if self.in_modal == false {
+        let window = if !self.in_modal {
             match self.active_window {
                 None | Some(0) => {
                     focused = true;
@@ -977,25 +977,23 @@ impl Ui {
     pub fn is_mouse_over(&self, mouse_position: Vec2) -> bool {
         for window in self.windows_focus_order.iter() {
             let window = &self.windows[window];
-            if window.was_active == false {
+            if !window.was_active {
                 continue;
             }
             if window.full_rect().contains(mouse_position) {
                 return true;
             }
         }
-        if let Some(window) = &self.modal {
-            if window.was_active {
-                if window.full_rect().contains(mouse_position) {
+        if let Some(window) = &self.modal
+            && window.was_active
+                && window.full_rect().contains(mouse_position) {
                     return true;
                 }
-            }
-        }
         false
     }
 
     pub fn active_window_focused(&self) -> bool {
-        self.active_window.map_or(false, |wnd| self.is_focused(wnd))
+        self.active_window.is_some_and(|wnd| self.is_focused(wnd))
     }
 
     pub const fn is_dragging(&self) -> bool {
@@ -1020,9 +1018,8 @@ impl Ui {
         if self.in_modal {
             true
         } else {
-            self.child_window_stack
-                .get(0)
-                .map_or(false, |root| *root == self.hovered_window)
+            self.child_window_stack.first()
+                .is_some_and(|root| *root == self.hovered_window)
         }
     }
 
@@ -1030,7 +1027,7 @@ impl Ui {
         if self
             .windows
             .get(&id)
-            .map_or(false, |window| window.force_focus)
+            .is_some_and(|window| window.force_focus)
         {
             return true;
         }
@@ -1043,7 +1040,7 @@ impl Ui {
             if id == *focused_window {
                 return true;
             }
-            if let Some(parent) = self.child_window_stack.get(0) {
+            if let Some(parent) = self.child_window_stack.first() {
                 return *parent == *focused_window;
             }
         }
@@ -1072,7 +1069,7 @@ impl Ui {
 
         self.key_repeat.new_frame(self.time);
 
-        for (_, window) in &mut self.windows {
+        for window in self.windows.values_mut() {
             window.painter.clear();
             window.cursor.reset();
             window.was_active = window.active;
@@ -1105,11 +1102,10 @@ impl Ui {
             }
         }
 
-        if let Some(modal) = self.modal.as_ref() {
-            if modal.was_active {
+        if let Some(modal) = self.modal.as_ref()
+            && modal.was_active {
                 self.render_window(modal, Vec2::new(0., 0.), draw_list);
             }
-        }
 
         if let Some((id, DragState::Dragging(orig))) = self.dragging {
             let window = &self.windows[&id];
@@ -1157,7 +1153,7 @@ impl Ui {
         context.window.same_line(x);
     }
 
-    pub fn canvas(&mut self) -> DrawCanvas {
+    pub fn canvas(&mut self) -> DrawCanvas<'_> {
         let context = self.get_active_window_context();
 
         DrawCanvas { context }
@@ -1238,7 +1234,7 @@ pub(crate) mod ui_context {
             let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
 
             while let Some(c) = get_char_pressed_ui() {
-                if ctrl == false {
+                if !ctrl {
                     ui.char_event(c, false, false);
                 }
             }
@@ -1363,7 +1359,7 @@ pub(crate) mod ui_context {
         }
     }
 
-    const VERTEX_SHADER: &'static str = "#version 100
+    const VERTEX_SHADER: &str = "#version 100
 attribute vec3 position;
 attribute vec4 color0;
 attribute vec2 texcoord;
@@ -1381,7 +1377,7 @@ void main() {
     color = color0 / 255.0;
 }
 ";
-    const FRAGMENT_SHADER: &'static str = "#version 100
+    const FRAGMENT_SHADER: &str = "#version 100
 varying lowp vec2 uv;
 varying lowp vec4 color;
 

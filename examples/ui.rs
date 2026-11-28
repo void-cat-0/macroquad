@@ -65,7 +65,7 @@ impl Data {
                     .highlight(*item_dragging)
                     .ui(ui, |ui| {
                         if let Some(ref item) = slot.item {
-                            ui.label(Vec2::new(5., 10.), &item);
+                            ui.label(Vec2::new(5., 10.), item);
                         }
                     });
 
@@ -103,7 +103,7 @@ impl Data {
             let drag = Group::new(hash!("inventory", n), Vec2::new(50., 50.))
                 .draggable(true)
                 .ui(ui, |ui| {
-                    ui.label(Vec2::new(5., 10.), &item);
+                    ui.label(Vec2::new(5., 10.), item);
                 });
 
             match drag {
@@ -133,6 +133,12 @@ impl Data {
     }
 }
 
+impl Default for Data {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[macroquad::main("UI showcase")]
 async fn main() {
     let mut data = Data::new();
@@ -155,7 +161,7 @@ async fn main() {
         widgets::Window::new(hash!(), vec2(400., 200.), vec2(320., 400.))
             .label("Shop")
             .titlebar(true)
-            .ui(&mut *root_ui(), |ui| {
+            .ui(&mut root_ui(), |ui| {
                 for i in 0..30 {
                     Group::new(hash!("shop", i), Vec2::new(300., 80.)).ui(ui, |ui| {
                         ui.label(Vec2::new(10., 10.), &format!("Item N {i}"));
@@ -171,7 +177,7 @@ async fn main() {
         widgets::Window::new(hash!(), vec2(100., 220.), vec2(542., 430.))
             .label("Fitting window")
             .titlebar(true)
-            .ui(&mut *root_ui(), |ui| {
+            .ui(&mut root_ui(), |ui| {
                 Group::new(hash!(), Vec2::new(230., 400.)).ui(ui, |ui| {
                     data.slots(ui);
                 });
@@ -182,7 +188,7 @@ async fn main() {
 
         widgets::Window::new(hash!(), vec2(470., 50.), vec2(300., 300.))
             .label("Megaui Showcase Window")
-            .ui(&mut *root_ui(), |ui| {
+            .ui(&mut root_ui(), |ui| {
                 ui.tree_node(hash!(), "input", |ui| {
                     ui.label(None, "Some random text");
                     if ui.button(None, "click me") {

@@ -36,6 +36,8 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
         path.to_string()
     };
 
+    // `path` is a `String` here except on Android, where it is the `&str` argument.
+    #[allow(clippy::needless_borrow)]
     load_file_inner(&path).await
 }
 
