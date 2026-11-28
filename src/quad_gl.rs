@@ -817,7 +817,7 @@ impl QuadGl {
             PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "Projection", projection);
             PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "Model", dc.model);
             PipelineExt::write_uniform(&pipeline.uniforms, uniforms, "_Time", time);
-            ctx.apply_uniforms_from_bytes(uniforms.as_ptr(), uniforms.len());
+            ctx.apply_uniforms(UniformsSource::slice(uniforms));
             ctx.draw(0, dc.indices_count as i32, 1);
 
             if dc.capture {

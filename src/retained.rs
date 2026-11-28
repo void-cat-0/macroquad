@@ -557,7 +557,7 @@ fn draw_meshes_ranges_inner(
         ctx.apply_pipeline(&material.gpu.pipeline);
         material.set_fixed(model, projection, alpha);
         let data = material.uniform_data.borrow();
-        ctx.apply_uniforms_from_bytes(data.as_ptr().cast(), data.len() * size_of::<f32>());
+        ctx.apply_uniforms(miniquad::UniformsSource::slice(data.as_slice()));
     } else {
         // Pass reuse does not imply that the selected shader is still bound.
         let pipeline = ensure_pipeline(ctx);
