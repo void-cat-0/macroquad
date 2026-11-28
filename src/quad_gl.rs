@@ -952,6 +952,17 @@ impl QuadGl {
                 .get(self.state.draw_mode, self.state.depth_test_enable),
         );
 
+        // With the built-in pipelines an affine model matrix is baked into the
+        // vertex positions, so geometry under different transforms (animated
+        // or nested UI) still shares one draw call. Custom materials may read
+        // the `Model` uniform themselves, and perspective matrices need the
+        // GPU's per-fragment perspective, so those keep the matrix.
+        let model = self.state.model();
+        let bake = self.state.pipeline.is_none()
+            && model != glam::Mat4::IDENTITY
+            && model.row(3) == glam::Vec4::W;
+        let model = if bake { glam::Mat4::IDENTITY } else { model };
+
         let previous_dc_ix = if self.draw_calls_count == 0 {
             None
         } else {
@@ -963,7 +974,7 @@ impl QuadGl {
             draw_call.texture != self.state.texture
                 || draw_call.clip != self.state.clip
                 || draw_call.viewport != self.state.viewport
-                || draw_call.model != self.state.model()
+                || draw_call.model != model
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
@@ -975,7 +986,7 @@ impl QuadGl {
             if self.draw_calls_count >= self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
                     self.state.texture,
-                    self.state.model(),
+                    model,
                     self.state.draw_mode,
                     pip,
                     self.state.render_pass,
@@ -996,7 +1007,7 @@ impl QuadGl {
             dc.indices_count = 0;
             dc.clip = self.state.clip;
             dc.viewport = self.state.viewport;
-            dc.model = self.state.model();
+            dc.model = model;
             dc.pipeline = pip;
             dc.render_pass = self.state.render_pass;
             dc.capture = self.state.capture;
@@ -1008,7 +1019,15 @@ impl QuadGl {
         };
         let dc = &mut self.draw_calls[self.draw_calls_count - 1];
 
-        self.batch_vertex_buffer.extend(vertices);
+        if bake {
+            let matrix = self.state.model();
+            self.batch_vertex_buffer.extend(vertices.iter().map(|vertex| Vertex {
+                position: matrix.transform_point3(vertex.position),
+                ..*vertex
+            }));
+        } else {
+            self.batch_vertex_buffer.extend(vertices);
+        }
         self.batch_index_buffer
             .extend(indices.iter().map(|x| *x + dc.vertices_count as u16));
 
